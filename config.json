@@ -1,0 +1,6 @@
+{
+    "cache_path" : "/tmp/",
+    "prune_min_days": 0,
+    "log_path": "amarelli.log" 
+}
+

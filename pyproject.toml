@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amarelli"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv",
+    "webdavclient3",
+    "xxhash",
+]
+
+[tool.setuptools]
+py-modules = ["cli", "config", "log", "cache", "database", "webdav_uploader"]
+
+[project.scripts]
+amarelli = "cli:main"

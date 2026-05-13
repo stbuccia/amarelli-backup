@@ -10,10 +10,12 @@ dependencies = [
     "python-dotenv",
     "webdavclient3",
     "xxhash",
+    "nmcli",
+    "flask",
 ]
 
 [tool.setuptools]
-py-modules = ["cli", "config", "log", "cache", "database", "webdav_uploader"]
+py-modules = ["cli", "config", "log", "cache", "database", "webdav_uploader", "wifi", "flask_app"]
 
 [project.scripts]
 amarelli = "cli:main"

@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["cli", "config", "log", "cache", "database", "webdav_uploader", "wifi", "flask_app"]
+py-modules = ["cli", "config", "log", "cache", "database", "webdav_uploader", "wifi", "flask_app", "spidev", "gpiozero", "Pillow"]
 
 [project.scripts]
 amarelli = "cli:main"

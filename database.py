@@ -2,6 +2,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from models import FileRecord
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -22,9 +24,11 @@ CREATE TABLE IF NOT EXISTS files (
 
 
 class Database:
-    def __init__(self, db_path=Path("files.db")):
+    def __init__(self, db_path: Path = Path("files.db")):
         self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path, autocommit=True)
+        self.conn = sqlite3.connect(
+            str(db_path), autocommit=True, check_same_thread=False
+        )
         self._create_schema()
 
     def _create_schema(self):
@@ -35,82 +39,94 @@ class Database:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_pruned ON files(pruned_at);"
         )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_files_copied ON files(copied_at);"
-        )
 
     def close(self):
         self.conn.close()
 
-    def is_cached(self, file_file_hash):
+    def _row_to_record(self, row) -> FileRecord:
+        return FileRecord(*row)
+
+    def find_by_hash(self, file_hash: str) -> FileRecord | None:
         cursor = self.conn.execute(
-            "SELECT 1 FROM files WHERE file_hash = ? AND cache_path is not NULL",
-            (file_file_hash,),
+            "SELECT * FROM files WHERE file_hash = ?", (file_hash,)
         )
-        return cursor.fetchone() is not None
+        row = cursor.fetchone()
+        return self._row_to_record(row) if row else None
 
-    def insert_file(self, file_file_hash, sd_path, cache_path, size_bytes, mtime):
-        cursor = self.conn.execute(
-            """INSERT INTO files (file_hash, sd_path, cache_path, size_bytes, mtime)
-               VALUES (?, ?, ?, ?, ?)""",
-            (file_file_hash, sd_path, cache_path, size_bytes, mtime),
-        )
-        return cursor.lastrowid
-
-    def update_cache_path(self, file_id, cache_path):
+    def create(
+        self,
+        file_hash: str,
+        sd_path: str,
+        cache_path: str,
+        size_bytes: int,
+        mtime: float,
+    ) -> FileRecord:
+        now = time.time()
         self.conn.execute(
-            "UPDATE files SET cache_path = ?, cached_at = ? WHERE id = ?",
-            (cache_path, time.time(), file_id),
+            """INSERT INTO files (file_hash, sd_path, cache_path, size_bytes, mtime, cached_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (file_hash, sd_path, cache_path, size_bytes, mtime, now),
         )
+        return self.find_by_hash(file_hash)
 
-    def mark_uploaded(self, file_id, remote_path):
+    def mark_uploaded(self, file_id: int, remote_path: str) -> None:
         self.conn.execute(
-            "UPDATE files SET uploaded_at = ?, remote_path = ?, upload_error=NULL WHERE id = ?",
+            "UPDATE files SET uploaded_at = ?, remote_path = ?, upload_error = NULL WHERE id = ?",
             (time.time(), remote_path, file_id),
         )
 
-    def mark_upload_error(self, file_id, error):
+    def mark_upload_error(self, file_id: int, error: str) -> None:
         self.conn.execute(
-            """UPDATE files SET upload_error = ?, upload_attempts = upload_attempts + 1
-               WHERE id = ?""",
+            "UPDATE files SET upload_error = ?, upload_attempts = upload_attempts + 1 WHERE id = ?",
             (error, file_id),
         )
 
-    def get_files_to_upload(self):
+    def find_pending_uploads(self) -> list[FileRecord]:
         cursor = self.conn.execute(
-            """SELECT id, file_hash, sd_path, cache_path, size_bytes
-               FROM files
+            """SELECT * FROM files
                WHERE cache_path IS NOT NULL
                  AND uploaded_at IS NULL
                  AND upload_error IS NULL
                ORDER BY cached_at"""
         )
-        # Restituisco le righe in una lista di dizionari
-        columns = [desc[0] for desc in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [self._row_to_record(row) for row in cursor.fetchall()]
 
-    def increment_upload_attempts(self, file_id):
-        self.conn.execute(
-            "UPDATE files SET upload_attempts = upload_attempts + 1 WHERE id = ?",
-            (file_id,),
-        )
-
-    def get_files_to_be_pruned(self, min_date=None):
-        if min_date:
+    def find_uploaded_not_pruned(
+        self, min_date: float | None = None
+    ) -> list[FileRecord]:
+        if min_date is not None:
             cursor = self.conn.execute(
-                """SELECT id, cache_path FROM files
+                """SELECT * FROM files
                    WHERE uploaded_at IS NOT NULL AND pruned_at IS NULL AND uploaded_at < ?""",
                 (min_date,),
             )
         else:
             cursor = self.conn.execute(
-                """SELECT id, cache_path FROM files WHERE uploaded_at IS NOT NULL AND pruned_at IS NULL"""
+                """SELECT * FROM files
+                   WHERE uploaded_at IS NOT NULL AND pruned_at IS NULL"""
             )
-        columns = [desc[0] for desc in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [self._row_to_record(row) for row in cursor.fetchall()]
 
-    def mark_pruned(self, file_id):
+    def mark_pruned(self, file_id: int) -> None:
         self.conn.execute(
             "UPDATE files SET pruned_at = ? WHERE id = ?",
             (time.time(), file_id),
         )
+
+    def count_cached(self) -> int:
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE cache_path IS NOT NULL"
+        )
+        return cursor.fetchone()[0]
+
+    def count_pending_uploads(self) -> int:
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE cache_path IS NOT NULL AND uploaded_at IS NULL AND upload_error IS NULL"
+        )
+        return cursor.fetchone()[0]
+
+    def count_uploaded(self) -> int:
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE uploaded_at IS NOT NULL"
+        )
+        return cursor.fetchone()[0]

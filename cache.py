@@ -4,6 +4,9 @@ import shutil
 import time
 import xxhash
 
+from exceptions import TransientError
+from eventbus import EventBus
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,16 +27,16 @@ def xx_hash64(filepath, chunk_size=131072):
 
 
 class Cache:
-    def __init__(self, cfg, db):
+    def __init__(self, cfg, db, bus=None):
         self.sd_src = Path("/home/stefano/Immagini/Luna")
         self.local_dst = Path(cfg.cache_path)
         self.cfg = cfg
         self.check_existence_dirs()
 
         self.db = db
+        self._bus = bus or EventBus()
 
     def check_existence_dirs(self):
-        # TODO: Nel caso non esista meglio inserire il local_dst
         for path in [self.sd_src, self.local_dst]:
             if not path.exists():
                 raise Exception(str(path) + " not found")
@@ -42,10 +45,29 @@ class Cache:
                 raise Exception(str(path) + " is not a directory")
 
     def _is_cached_file(self, file_hash):
-        return self.db.is_cached(file_hash)
+        record = self.db.find_by_hash(file_hash)
+        return record is not None and record.cache_path is not None
+
+    def count_uncached(self) -> int:
+        count = 0
+        try:
+            it = self.sd_src.walk()
+        except OSError:
+            return 0
+        for root, dirs, filenames in it:
+            for filename in filenames:
+                file_hash = xx_hash64(root / filename)
+                if file_hash and not self._is_cached_file(file_hash):
+                    count += 1
+        return count
 
     def copy(self):
-        for root, dirs, filenames in self.sd_src.walk():
+        try:
+            it = self.sd_src.walk()
+        except OSError as e:
+            raise TransientError(f"Cannot read SD card: {e}") from e
+
+        for root, dirs, filenames in it:
             for filename in filenames:
                 src = root / filename
 
@@ -59,9 +81,10 @@ class Cache:
                         logger.info(f"Copied: {src} -> {dst}")
 
                         st = src.stat()
-                        self.db.insert_file(
+                        record = self.db.create(
                             file_hash, str(src), str(dst), st.st_size, st.st_mtime
                         )
+                        self._bus.emit("file:cached", file=record)
                         logger.info(
                             f"Inserted in DB: {file_hash}, {src}, {dst}, {st.st_size}, {st.st_mtime}"
                         )
@@ -70,19 +93,23 @@ class Cache:
 
     def prune(self):
         min_date = (
-            time.time() - (self.cfg.prune_min_days * 86400)  # 86400 = 60*60*24
+            time.time() - (self.cfg.prune_min_days * 86400)
             if self.cfg.prune_min_days
             else None
         )
 
-        uploaded = self.db.get_files_to_be_pruned(min_date)
+        try:
+            uploaded = self.db.find_uploaded_not_pruned(min_date)
+        except Exception as e:
+            raise TransientError(f"Database error during prune: {e}") from e
         for f in uploaded:
             try:
-                path = Path(f["cache_path"])
+                path = Path(f.cache_path)
                 if path.exists():
                     path.unlink()
                     logger.info(f"Deleted: {path}")
-                self.db.mark_pruned(f["id"])
-                logger.info(f"Marked pruned: {f['id']}")
+                self.db.mark_pruned(f.id)
+                self._bus.emit("file:pruned", file=f)
+                logger.info(f"Marked pruned: {f.id}")
             except Exception as e:
-                logger.error(f"Error pruning {f['id']}: {e}")
+                logger.error(f"Error pruning {f.id}: {e}")

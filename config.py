@@ -1,13 +1,15 @@
 import os
 import json
+import logging
 from dotenv import load_dotenv
 
 
 CONFIG_FILE = "config.json"
+logger = logging.getLogger(__name__)
 
 
 class Config:
-    def __init__(self):
+    def __init__(self, bus=None):
 
         load_dotenv()
 
@@ -25,3 +27,17 @@ class Config:
             config = json.load(f)
 
         self.__dict__.update(config)
+
+        if bus:
+            bus.on("config:set", self._on_config_set)
+
+    def _on_config_set(self, key, value, **kw):
+        try:
+            with open(CONFIG_FILE) as _f:
+                _cfg = json.load(_f)
+            _cfg[key] = value
+            with open(CONFIG_FILE, "w") as _f:
+                json.dump(_cfg, _f, indent=4)
+            logger.info("Config %s = %s (saved)", key, value)
+        except Exception as _e:
+            logger.warning("Failed to save config %s: %s", key, _e)

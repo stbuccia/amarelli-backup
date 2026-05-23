@@ -252,20 +252,17 @@ class Display:
     def __init__(self, epd, font):
         self._epd = epd
         self._font = font
-        self._base_set = False
 
     @property
     def font(self):
         return self._font
 
     def init(self):
-        self._epd.init_fast()
-        self._epd.Clear(0xFF)
-        self._base_set = False
-
-    def init_full(self):
         self._epd.init()
         self._epd.Clear(0xFF)
+
+    def init_full(self):
+        self.init()
 
     def sleep(self):
         self._epd.sleep()
@@ -285,16 +282,10 @@ class Display:
         legend.render(draw, self._font, self.WIDTH, self.HEIGHT)
         return img
 
-    def render_base(self, content_view, status_bar, legend):
+    def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
-        self._epd.displayPartBaseImage(self._epd.getbuffer(img))
-
-    def render_partial(self, content_view, status_bar, legend):
-        if not self._base_set:
-            self.render_base(content_view, status_bar, legend)
-            self._base_set = True
-        img = self._compose(content_view, status_bar, legend)
-        self._epd.displayPartial(self._epd.getbuffer(img))
+        self._epd.init_fast()
+        self._epd.display_fast(self._epd.getbuffer(img))
 
 
 def setup_ui_handlers(
@@ -309,14 +300,14 @@ def setup_ui_handlers(
         active_view[0] = menu_view
         status_bar.set_title(menu.breadcrumb_title)
         legend.set_text("\u25b2/\u25bc nav  \u25b6 enter  \u25c0 back  Q quit")
-        display.render_partial(active_view[0], status_bar, legend)
+        display.render_full(active_view[0], status_bar, legend)
 
     def on_menu_closed(**kw):
         active_view[0] = status_view
         status_bar.set_title("Amarelli")
         legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
         status_view.refresh()
-        display.render_partial(active_view[0], status_bar, legend)
+        display.render_full(active_view[0], status_bar, legend)
 
     def on_statusbar_update(title=None, battery=None, wifi=None, **kw):
         if title is not None:

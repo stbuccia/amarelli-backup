@@ -92,7 +92,7 @@ def run_interactive(epd):
     status_view = BackupStatusView(db, bus=bus)
     status_view.refresh()
 
-    keys = TerminalKeyListener() if args.mock else GpioKeyListener()
+    keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(19, 20, 5, 6))
 
     display.init()
     _loop(
@@ -117,24 +117,24 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
     if ch == "b":
         sb.set_battery(sb._battery - 10)
         logger.info("Battery: %d%%", sb._battery)
-        display.render_partial(current_view, sb, legend)
+        display.render_full(current_view, sb, legend)
         return True
     if ch == "B":
         sb.set_battery(sb._battery + 10)
         logger.info("Battery: %d%%", sb._battery)
-        display.render_partial(current_view, sb, legend)
+        display.render_full(current_view, sb, legend)
         return True
     if ch == "i":
         sb.set_wifi(not sb._wifi)
         logger.info("WiFi: %s", "connected" if sb._wifi else "disconnected")
-        display.render_partial(current_view, sb, legend)
+        display.render_full(current_view, sb, legend)
         return True
     if ch == "t":
         titles = ["Amarelli", "Settings", "Photos", "System"]
         curr = titles.index(sb._title) if sb._title in titles else -1
         sb.set_title(titles[(curr + 1) % len(titles)])
         logger.info("Title: %s", sb._title)
-        display.render_partial(current_view, sb, legend)
+        display.render_full(current_view, sb, legend)
         return True
     return False
 
@@ -154,7 +154,7 @@ def _loop(
                 )
             elif active_view[0] is menu_view:
                 print(f"[DISPLAY] {sb._title} | MENU: {menu.current_label}")
-            display.render_partial(active_view[0], sb, legend)
+            display.render_full(active_view[0], sb, legend)
         else:
             redraw_pending = True
 
@@ -178,7 +178,7 @@ def _loop(
     sb.set_title("Amarelli")
     legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
     status_view.refresh()
-    display.render_partial(active_view[0], sb, legend)
+    display.render_full(active_view[0], sb, legend)
 
     # --- System/wifi stubs ---
     bus.on("wifi:connect", lambda **kw: logger.info("[MENU] Avvio AP + Flask..."))
@@ -208,7 +208,7 @@ def _loop(
                     )
                 elif active_view[0] is menu_view:
                     print(f"[DISPLAY] {sb._title} | MENU: {menu.current_label}")
-            display.render_partial(active_view[0], sb, legend)
+            display.render_full(active_view[0], sb, legend)
 
         ch = keys.get_key()
         if ch is None:

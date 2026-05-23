@@ -12,10 +12,15 @@ dependencies = [
     "xxhash",
     "nmcli",
     "flask",
+    "spidev",
+    "gpiozero",
+    "lgpio",
+    "RPi.GPIO",
+    "Pillow",
 ]
 
 [tool.setuptools]
-py-modules = ["main", "display", "menu", "config", "log", "cache", "database", "webdav_uploader", "wifi", "flask_app", "spidev", "gpiozero", "Pillow"]
+py-modules = ["main", "display", "menu", "config", "log", "cache", "database", "webdav_uploader", "wifi", "flask_app"]
 
 [project.scripts]
 amarelli = "main:main"

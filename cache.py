@@ -28,7 +28,7 @@ def xx_hash64(filepath, chunk_size=131072):
 
 class Cache:
     def __init__(self, cfg, db, bus=None):
-        self.sd_src = Path("/home/stefano/Immagini/Luna")
+        self.sd_src = Path("/home/pi/SD")
         self.local_dst = Path(cfg.cache_path)
         self.cfg = cfg
         self.check_existence_dirs()

@@ -13,5 +13,8 @@ Progetto DIY che consiste nel trasformare una scatola di liquerizia Amarelli in 
 ...
 
 + `cp -r "~/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd" .`
-+ `python3 -m venv  .env`
-+ `.env/bin/pip install .`
++ `python3 -m venv  .venv`
++ source .venv/bin/activate
++ `.venv/bin/pip install .`
+
++ `python3 main.py`

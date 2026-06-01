@@ -50,6 +50,8 @@ MENU_TREE = [
     ),
     MenuItem("Stato sistema",
              action=lambda: bus.emit("system:status")),
+    MenuItem("Avvia hotspot",
+             action=lambda: bus.emit("hotspot:start")),
     MenuItem(
         "Spegni",
         children=[

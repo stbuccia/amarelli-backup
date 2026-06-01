@@ -252,17 +252,18 @@ class Display:
     def __init__(self, epd, font):
         self._epd = epd
         self._font = font
+        self._initialized = False
 
     @property
     def font(self):
         return self._font
 
     def init(self):
-        self._epd.init()
-        self._epd.Clear(0xFF)
+        pass
 
     def init_full(self):
-        self.init()
+        self._epd.init()
+        self._epd.Clear(0xFF)
 
     def sleep(self):
         self._epd.sleep()
@@ -284,8 +285,13 @@ class Display:
 
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
-        self._epd.init_fast()
-        self._epd.display_fast(self._epd.getbuffer(img))
+        if not self._initialized:
+            self._epd.init()
+            self._epd.display(self._epd.getbuffer(img))
+            self._initialized = True
+        else:
+            self._epd.init_fast()
+            self._epd.display_fast(self._epd.getbuffer(img))
 
 
 def setup_ui_handlers(

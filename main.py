@@ -35,6 +35,8 @@ else:
     EPD = epd2in13_V4.EPD
 
 
+import threading
+
 from display import (
     StatusBar,
     Legend,
@@ -53,6 +55,8 @@ from cache import Cache
 from webdav_uploader import WebDav
 from log import setup_logger
 from backup import Backup, State
+from wifi import WiFiManager
+from flask_app import create_app
 
 
 def get_ip_address() -> str:
@@ -67,6 +71,10 @@ def get_ip_address() -> str:
 
 
 def run_interactive(epd):
+    font = load_font(14)
+    display = Display(epd, font)
+    display.init()
+
     config = Config(bus=bus)
     setup_logger(config)
 
@@ -81,8 +89,6 @@ def run_interactive(epd):
 
     wf = Backup(cache_obj, webdav, db, bus)
 
-    font = load_font(14)
-    display = Display(epd, font)
     sb = StatusBar()
     legend = Legend()
     with open("config.json") as f:
@@ -94,7 +100,6 @@ def run_interactive(epd):
 
     keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(19, 20, 5, 6))
 
-    display.init()
     _loop(
         display,
         menu,
@@ -180,10 +185,71 @@ def _loop(
     status_view.refresh()
     display.render_full(active_view[0], sb, legend)
 
-    # --- System/wifi stubs ---
-    bus.on("wifi:connect", lambda **kw: logger.info("[MENU] Avvio AP + Flask..."))
-    bus.on("wifi:show_ip", lambda **kw: logger.info(f"[MENU] IP: {get_ip_address()}"))
-    bus.on("wifi:reset", lambda **kw: logger.info("[MENU] Reset WiFi..."))
+    # --- Stato gestione WiFi/AP/Flask ---
+    wifi_manager = None
+    flask_thread = None
+
+    def start_hotspot(**kw):
+        nonlocal wifi_manager, flask_thread
+        logger.info("[MENU] Avvio AP + Flask...")
+
+        wifi_manager = WiFiManager(config)
+        try:
+            ssid = config.wifi_ap_ssid
+            password = config.wifi_ap_password
+            if not password:
+                logger.warning("WIFI_AP_PASSWORD non impostata nel .env")
+                legend.set_text("NO AP PASSWORD!")
+                display.render_full(active_view[0], sb, legend)
+                return
+            wifi_manager.start_ap(ssid, password)
+            sb.set_wifi(True)
+            sb.set_title(f"AP: {ssid}")
+            legend.set_text(f"IP: {WiFiManager.AP_IP}:5000")
+            display.render_full(active_view[0], sb, legend)
+            logger.info("AP '%s' avviato su %s", ssid, wifi_manager.AP_IP)
+        except Exception as e:
+            logger.error("Errore avvio AP: %s", e)
+            legend.set_text("AP error!")
+            display.render_full(active_view[0], sb, legend)
+            return
+
+        if flask_thread is None or not flask_thread.is_alive():
+            app = create_app(wifi_manager=wifi_manager, db=db)
+            flask_thread = threading.Thread(
+                target=app.run,
+                kwargs={"host": "0.0.0.0", "port": 5000, "debug": False, "use_reloader": False},
+                daemon=True,
+            )
+            flask_thread.start()
+            logger.info("Flask avviato su 0.0.0.0:5000")
+
+    bus.on("hotspot:start", start_hotspot)
+    bus.on("wifi:connect", lambda **kw: start_hotspot())
+
+    def show_ip(**kw):
+        ip = get_ip_address()
+        logger.info("[MENU] IP: %s", ip)
+        sb.set_title(f"IP: {ip}")
+        legend.set_text("\u25c0 back")
+        display.render_full(active_view[0], sb, legend)
+
+    bus.on("wifi:show_ip", show_ip)
+
+    def stop_hotspot(**kw):
+        nonlocal wifi_manager, flask_thread
+        logger.info("[MENU] Arresto AP...")
+        if wifi_manager:
+            try:
+                wifi_manager.stop_ap()
+            except Exception as e:
+                logger.error("Errore arresto AP: %s", e)
+        sb.set_wifi(False)
+        sb.set_title("Amarelli")
+        legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
+        display.render_full(active_view[0], sb, legend)
+
+    bus.on("wifi:reset", stop_hotspot)
     bus.on("system:shutdown", lambda **kw: logger.info("[MENU] Shutdown..."))
     bus.on("system:reboot", lambda **kw: logger.info("[MENU] Reboot..."))
 

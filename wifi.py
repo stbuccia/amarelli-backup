@@ -63,3 +63,50 @@ class WiFiManager:
             log.info("Access point stopped")
         except NotExistException:
             log.warning("Access point '%s' not active", self.AP_CONNECTION_NAME)
+
+    def scan_networks(self) -> list[dict]:
+        try:
+            output = nmcli.device.wifi(ifname=self.ifname, rescan=True)
+        except Exception:
+            try:
+                output = nmcli.device.wifi(ifname=self.ifname)
+            except Exception as e:
+                log.error("Failed to scan networks: %s", e)
+                return []
+        networks = []
+        for row in output:
+            networks.append({
+                "ssid": row.ssid,
+                "signal": row.signal,
+                "security": row.security,
+                "channel": row.channel,
+            })
+        seen = set()
+        unique = []
+        for n in networks:
+            if n["ssid"] and n["ssid"] not in seen:
+                seen.add(n["ssid"])
+                unique.append(n)
+        return unique
+
+    def connect_to_network(self, ssid: str, password: str = "") -> bool:
+        try:
+            self.stop_ap()
+        except Exception:
+            pass
+        try:
+            nmcli.device.wifi_connect(ssid, password, ifname=self.ifname)
+            log.info("Connected to '%s'", ssid)
+            return True
+        except Exception as e:
+            log.error("Failed to connect to '%s': %s", ssid, e)
+            return False
+
+    def is_ap_active(self) -> bool:
+        try:
+            nmcli.connection.show(self.AP_CONNECTION_NAME)
+            return True
+        except NotExistException:
+            return False
+        except Exception:
+            return False

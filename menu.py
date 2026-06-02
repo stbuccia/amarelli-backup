@@ -30,12 +30,22 @@ MENU_TREE = [
     MenuItem(
         "WiFi",
         children=[
-            MenuItem("Connetti a rete",
-                     action=lambda: bus.emit("wifi:connect")),
+            MenuItem("Avvia hotspot",
+                     action=lambda: bus.emit("hotspot:start")),
+            MenuItem("Avvia server web",
+                     action=lambda: bus.emit("server:start")),
             MenuItem("Mostra IP",
                      action=lambda: bus.emit("wifi:show_ip")),
             MenuItem("Resetta WiFi",
                      action=lambda: bus.emit("wifi:reset")),
+        ],
+    ),
+    MenuItem(
+        "Modalità",
+        config_key="mode",
+        children=[
+            MenuItem("Upload unilaterale",  value="upload"),
+            MenuItem("Mirroring",           value="mirror"),
         ],
     ),
     MenuItem(
@@ -50,8 +60,6 @@ MENU_TREE = [
     ),
     MenuItem("Stato sistema",
              action=lambda: bus.emit("system:status")),
-    MenuItem("Avvia hotspot",
-             action=lambda: bus.emit("hotspot:start")),
     MenuItem(
         "Spegni",
         children=[

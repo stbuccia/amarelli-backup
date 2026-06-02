@@ -1,7 +1,10 @@
 Adesso
 - Cli 
+- Testare effettivamente la connessione tramite Web Server (elencare reti salvate)
+- Mettere a posto font
+- Sistemare font e icone 
+- Daemon 
 - Wifi connection
-- Ordinare stagno 
 - Anche il logger gestito con eventi
 
 Inserire modalità controllo che file sia copiato a remoto e stessa cosa per la cache. Sicuro che lo voglio??

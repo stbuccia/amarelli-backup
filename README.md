@@ -18,3 +18,7 @@ Progetto DIY che consiste nel trasformare una scatola di liquerizia Amarelli in 
 + `.venv/bin/pip install .`
 
 + `python3 main.py`
+
+
+...
++ `nmcli connection delete "Amarelli AP"`

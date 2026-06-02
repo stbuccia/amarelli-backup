@@ -16,6 +16,9 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--mock", action="store_true", help="Use mock EPD (software rendering, no hardware)"
 )
+parser.add_argument(
+    "--imagick", action="store_true", help="Usa ImageMagick display per preview live del display"
+)
 args = parser.parse_args()
 
 picdir = os.path.join(
@@ -72,7 +75,8 @@ def get_ip_address() -> str:
 
 def run_interactive(epd):
     font = load_font(14)
-    display = Display(epd, font)
+    snapshot_path = "display_output.png" if args.imagick else None
+    display = Display(epd, font, snapshot_path=snapshot_path)
     display.init()
 
     config = Config(bus=bus)
@@ -87,7 +91,7 @@ def run_interactive(epd):
     except Exception as e:
         logger.warning("Cache/WebDav init skipped: %s", e)
 
-    wf = Backup(cache_obj, webdav, db, bus)
+    wf = Backup(cache_obj, webdav, db, bus, mode=getattr(config, 'mode', 'upload'))
 
     sb = StatusBar()
     legend = Legend()
@@ -110,7 +114,10 @@ def run_interactive(epd):
         keys,
         backup=wf,
         bus=bus,
+        config=config,
+        db=db,
         mock=args.mock,
+        imagick=args.imagick,
     )
 
     keys.cleanup()
@@ -145,7 +152,7 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
 
 
 def _loop(
-    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, mock=False
+    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False, imagick=False
 ):
     redraw_pending = False
     last_refresh = 0.0
@@ -189,6 +196,20 @@ def _loop(
     wifi_manager = None
     flask_thread = None
 
+    def _start_flask(wm=None):
+        nonlocal flask_thread
+        if flask_thread is not None and flask_thread.is_alive():
+            logger.info("Flask già avviato")
+            return
+        app = create_app(wifi_manager=wm, db=db)
+        flask_thread = threading.Thread(
+            target=app.run,
+            kwargs={"host": "0.0.0.0", "port": 5000, "debug": False, "use_reloader": False},
+            daemon=True,
+        )
+        flask_thread.start()
+        logger.info("Flask avviato su 0.0.0.0:5000")
+
     def start_hotspot(**kw):
         nonlocal wifi_manager, flask_thread
         logger.info("[MENU] Avvio AP + Flask...")
@@ -214,18 +235,20 @@ def _loop(
             display.render_full(active_view[0], sb, legend)
             return
 
-        if flask_thread is None or not flask_thread.is_alive():
-            app = create_app(wifi_manager=wifi_manager, db=db)
-            flask_thread = threading.Thread(
-                target=app.run,
-                kwargs={"host": "0.0.0.0", "port": 5000, "debug": False, "use_reloader": False},
-                daemon=True,
-            )
-            flask_thread.start()
-            logger.info("Flask avviato su 0.0.0.0:5000")
+        _start_flask(wifi_manager)
 
     bus.on("hotspot:start", start_hotspot)
     bus.on("wifi:connect", lambda **kw: start_hotspot())
+
+    def start_web_server(**kw):
+        logger.info("[MENU] Avvio solo server web...")
+        _start_flask(None)
+        ip = get_ip_address()
+        sb.set_title(f"Server: {ip}:5000")
+        legend.set_text("\u25c0 back")
+        display.render_full(active_view[0], sb, legend)
+
+    bus.on("server:start", start_web_server)
 
     def show_ip(**kw):
         ip = get_ip_address()
@@ -260,6 +283,16 @@ def _loop(
 
     bus.on("system:status", on_system_status)
 
+    _imagick_proc = None
+    if imagick:
+        try:
+            _imagick_proc = subprocess.Popen(
+                ["display", "-update", "1", "display_output.png"]
+            )
+            print(f"[imagick] ImageMagick display avviato (pid {_imagick_proc.pid})")
+        except FileNotFoundError:
+            print("[imagick] 'display' non trovato. Installa ImageMagick.")
+
     print("Amarelli interactive. \u25b6 action, \u25c0 back, Q quit.")
     if mock:
         print("          b B battery  i wifi  t title  (mock)")
@@ -282,6 +315,8 @@ def _loop(
             continue
         if ch in ("q", "Q"):
             print("Exit.")
+            if _imagick_proc:
+                _imagick_proc.terminate()
             break
         if mock and _handle_mock_keys(ch, sb, display, active_view[0], legend):
             continue

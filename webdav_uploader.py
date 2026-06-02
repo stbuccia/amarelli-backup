@@ -29,10 +29,16 @@ class WebDav:
         self.db = db
         self._bus = bus or EventBus()
         self.cache_path = cfg.cache_path
+        self._cloud_dst = "/"
+
+    @property
+    def cloud_dst(self) -> str:
+        return self._cloud_dst
 
     def upload(self):
         today_str = ""
         cloud_dst = "/" + today_str
+        self._cloud_dst = cloud_dst
         local_src = Path(self.cache_path)
 
         try:
@@ -82,4 +88,44 @@ class WebDav:
                 ) from last_error
             raise TransientError(
                 f"All {error_count} files failed to upload"
+            ) from last_error
+
+    def cleanup_remote(self):
+        files = self.db.find_marked_for_deletion()
+        if not files:
+            logger.info("No remote files to clean up")
+            return
+
+        success_count = 0
+        error_count = 0
+        last_error = None
+
+        for f in files:
+            remote_path = f.remote_path
+            if not remote_path:
+                continue
+            try:
+                logger.info(f"Deleting remote file: {remote_path}")
+                self.client.clean(remote_path)
+                local_path = Path(f.cache_path) if f.cache_path else None
+                if local_path and local_path.exists():
+                    local_path.unlink()
+                    logger.info(f"Deleted local cache: {local_path}")
+                self.db.clear_deletion_mark(f.id)
+                self._bus.emit("file:remote_deleted", file=f)
+                logger.info(f"Deleted: {remote_path}")
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Error deleting remote file {remote_path}: {e}")
+                error_count += 1
+                last_error = e
+
+        if success_count == 0 and error_count > 0 and last_error is not None:
+            err = str(last_error).lower()
+            if any(kw in err for kw in ("401", "403", "unauthor", "forbidden")):
+                raise PermanentError(
+                    f"Auth error - all {error_count} files failed to delete"
+                ) from last_error
+            raise TransientError(
+                f"All {error_count} files failed to delete from remote"
             ) from last_error

@@ -35,6 +35,11 @@ class Cache:
 
         self.db = db
         self._bus = bus or EventBus()
+        self._last_seen_hashes: set[str] = set()
+
+    @property
+    def last_seen_hashes(self) -> set[str]:
+        return set(self._last_seen_hashes)
 
     def check_existence_dirs(self):
         for path in [self.sd_src, self.local_dst]:
@@ -62,6 +67,8 @@ class Cache:
         return count
 
     def copy(self):
+        self._last_seen_hashes = set()
+
         try:
             it = self.sd_src.walk()
         except OSError as e:
@@ -72,6 +79,9 @@ class Cache:
                 src = root / filename
 
                 file_hash = xx_hash64(src)
+                if file_hash:
+                    self._last_seen_hashes.add(file_hash)
+
                 if not self._is_cached_file(file_hash):
                     rel = src.relative_to(self.sd_src)
                     dst = self.local_dst / rel

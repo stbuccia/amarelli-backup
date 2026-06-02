@@ -5,6 +5,79 @@ from PIL import Image, ImageDraw, ImageFont
 
 from backup import State
 
+BATTERY_SIZE = 16
+ICON_SIZE = 7
+
+
+def _draw_icon_triangle(draw, x, y, size, fill, direction):
+    h = size
+    w = size
+    if direction == "right":
+        pts = [(x, y), (x, y + h - 1), (x + w - 1, y + h // 2)]
+    elif direction == "left":
+        pts = [(x + w - 1, y), (x + w - 1, y + h - 1), (x, y + h // 2)]
+    elif direction == "up":
+        pts = [(x, y + h - 1), (x + w // 2, y), (x + w - 1, y + h - 1)]
+    elif direction == "down":
+        pts = [(x, y), (x + w // 2, y + h - 1), (x + w - 1, y)]
+    draw.polygon(pts, fill=fill)
+
+
+def _draw_icon_circle(draw, x, y, size, fill):
+    r = size // 2
+    cx, cy = x + r, y + r
+    draw.ellipse([(cx - r, cy - r), (cx + r, cy + r)], outline=fill, fill=None)
+
+
+def _draw_icon_circle_filled(draw, x, y, size, fill):
+    r = size // 2
+    cx, cy = x + r, y + r
+    draw.ellipse([(cx - r, cy - r), (cx + r, cy + r)], fill=fill, outline=fill)
+
+
+_ICON_DISPATCH = {
+    "\u25b6": lambda d, x, y, s, f: _draw_icon_triangle(d, x, y, s, f, "right"),
+    "\u25c0": lambda d, x, y, s, f: _draw_icon_triangle(d, x, y, s, f, "left"),
+    "\u25b2": lambda d, x, y, s, f: _draw_icon_triangle(d, x, y, s, f, "up"),
+    "\u25bc": lambda d, x, y, s, f: _draw_icon_triangle(d, x, y, s, f, "down"),
+    "\u25cb": lambda d, x, y, s, f: _draw_icon_circle(d, x, y, s, f),
+    "\u25cf": lambda d, x, y, s, f: _draw_icon_circle_filled(d, x, y, s, f),
+}
+
+
+def _draw_icon_battery(draw, x, y, size, fill, percent=100):
+    bw, bh = size * 7 // 10, size * 6 // 10
+    bx = x + (size - bw) // 2
+    by = y + (size - bh) // 2
+    draw.rectangle([(bx, by), (bx + bw - 1, by + bh - 1)], outline=fill, fill=None)
+    nw = max(1, size // 10)
+    nh = max(1, bh // 3)
+    draw.rectangle([(bx + bw, by + nh), (bx + bw + nw - 1, by + bh - nh - 1)], fill=fill)
+    iw = bw - 2
+    fw = max(0, min(iw, round(iw * percent / 100)))
+    if fw > 0:
+        draw.rectangle([(bx + 1, by + 1), (bx + fw, by + bh - 2)], fill=fill)
+
+
+def _render_icons_in_text(draw, x, y, text, font, fill=0):
+    _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
+    ox = x
+    buf = ""
+    for ch in text:
+        if ch in _ICON_DISPATCH:
+            if buf:
+                draw.text((ox, y), buf, font=font, fill=fill)
+                ow, _ = draw.textbbox((0, 0), buf, font=font)[2:4]
+                ox += ow
+                buf = ""
+            iy = y + (th - ICON_SIZE) // 2
+            _ICON_DISPATCH[ch](draw, ox, iy, ICON_SIZE, fill)
+            ox += ICON_SIZE + 1
+        else:
+            buf += ch
+    if buf:
+        draw.text((ox, y), buf, font=font, fill=fill)
+
 picdir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "pic"
 )
@@ -43,11 +116,14 @@ class StatusBar:
 
         draw.text((4, text_y), self._title, font=font, fill=0)
 
-        wifi_char = "\u25c9" if self._wifi else "\u25cb"
         bat = f"{self._battery}%"
-        right_text = f"{wifi_char} {bat}"
-        _, _, rw, _ = draw.textbbox((0, 0), right_text, font=font)
-        draw.text((width - rw - 4, text_y), right_text, font=font, fill=0)
+        _, _, bw, _ = draw.textbbox((0, 0), bat, font=font)
+        bx = width - bw - 4
+        draw.text((bx, text_y), bat, font=font, fill=0)
+
+        ix = bx - 2 - BATTERY_SIZE
+        iy = text_y + (th - BATTERY_SIZE) // 2
+        _draw_icon_battery(draw, ix, iy, BATTERY_SIZE, 0, self._battery)
 
         draw.line([(2, y + self.HEIGHT - 1), (width - 2, y + self.HEIGHT - 1)], fill=0)
 
@@ -65,13 +141,15 @@ class Legend:
         _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
         y = screen_height - self.HEIGHT
         draw.rectangle([(0, y), (width, screen_height)], fill=255)
-        _, _, tw, _ = draw.textbbox((0, 0), self._text, font=font)
-        draw.text(
-            ((width - tw) // 2, y + (self.HEIGHT - th) // 2),
-            self._text,
-            font=font,
-            fill=0,
-        )
+        tw = 0
+        for ch in self._text:
+            if ch in _ICON_DISPATCH:
+                tw += ICON_SIZE + 1
+            else:
+                cw, _ = draw.textbbox((0, 0), ch, font=font)[2:4]
+                tw += cw
+        ty = y + (self.HEIGHT - th) // 2
+        _render_icons_in_text(draw, (width - tw) // 2, ty, self._text, font, fill=0)
 
 
 class BackupStatusView:
@@ -86,12 +164,14 @@ class BackupStatusView:
         self.uploaded_count = 0
         self.progress_total = 0
         self.progress_current = 0
+        self._wifi = True
         self._bus = bus
         if bus:
             bus.on("backup:state", self._on_backup_state)
             bus.on("file:cached", self._on_file_cached)
             bus.on("file:uploaded", self._on_file_uploaded)
             bus.on("file:pruned", self._on_file_pruned)
+            bus.on("file:remote_deleted", self._on_remote_deleted)
 
     def refresh(self):
         try:
@@ -114,6 +194,7 @@ class BackupStatusView:
         self.status = {
             State.CACHING: "Caching files...",
             State.UPLOADING: "Uploading...",
+            State.REMOTE_CLEANUP: "Cleaning remote...",
             State.PRUNING: "Pruning cache...",
             State.COMPLETED: "Done",
             State.PAUSED: "Paused",
@@ -135,6 +216,7 @@ class BackupStatusView:
             State.IDLE: "\u25b6 backup  \u25c0 menu  Q quit",
             State.CACHING: "\u25c0 pause  Q quit",
             State.UPLOADING: "\u25c0 pause  Q quit",
+            State.REMOTE_CLEANUP: "\u25c0 pause  Q quit",
             State.PRUNING: "\u25c0 pause  Q quit",
             State.PAUSED: "\u25b6 resume  \u25c0 stop  Q quit",
             State.RETRYING: "\u25c0 pause  Q quit",
@@ -162,6 +244,12 @@ class BackupStatusView:
         self.inc_progress()
         self._bus.emit("ui:redraw")
 
+    def _on_remote_deleted(self, file=None, **kw):
+        self.uploaded_count = max(0, self.uploaded_count - 1)
+        self.cached_count = max(0, self.cached_count - 1)
+        self.inc_progress()
+        self._bus.emit("ui:redraw")
+
     def render(self, draw, font, width, height, y_offset=0, bottom_margin=0):
         draw.rectangle([(0, y_offset), (width, height)], fill=255)
         _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
@@ -170,6 +258,10 @@ class BackupStatusView:
         y = y_offset + 4
 
         draw.text((x, y), f"Status: {self.status}", font=font, fill=0)
+        y += line_h
+
+        wifi_label = "Connected" if self._wifi else "Disconnected"
+        draw.text((x, y), f"WiFi: {wifi_label}", font=font, fill=0)
         y += line_h
 
         if self.progress_total > 0:
@@ -225,22 +317,38 @@ class MenuView:
             if y + line_h > height - bottom_margin - 2:
                 break
 
+            label_text = item.label
+            icon_right = None
+            icon_left = None
+
             if item.is_branch:
-                display_label = f"{item.label} \u25b6"
+                icon_right = "\u25b6"
             elif parent_config_key is not None and self._menu._config is not None:
                 current_val = self._menu._config.get(parent_config_key)
                 if current_val == item.value:
-                    display_label = f"\u25cf {item.label}"
+                    icon_left = "\u25cf"
                 else:
-                    display_label = f"\u25cb {item.label}"
-            else:
-                display_label = item.label
+                    icon_left = "\u25cb"
 
             if i == self._menu._selected:
                 draw.rectangle([(x, y), (width - x, y + line_h)], fill=0)
-                draw.text((x + 2, y + 1), display_label, font=font, fill=255)
+                text_fill = 255
             else:
-                draw.text((x + 2, y + 1), display_label, font=font, fill=0)
+                text_fill = 0
+
+            cx = x + 2
+            if icon_left:
+                iy = y + 1 + (th - ICON_SIZE) // 2
+                _ICON_DISPATCH[icon_left](draw, cx, iy, ICON_SIZE, text_fill)
+                cx += ICON_SIZE + 2
+
+            draw.text((cx, y + 1), label_text, font=font, fill=text_fill)
+            _, _, lw, _ = draw.textbbox((0, 0), label_text, font=font)
+            cx += lw
+
+            if icon_right:
+                iy = y + 1 + (th - ICON_SIZE) // 2
+                _ICON_DISPATCH[icon_right](draw, cx + 2, iy, ICON_SIZE, text_fill)
 
             y += line_h
 
@@ -249,10 +357,11 @@ class Display:
     WIDTH = 250
     HEIGHT = 122
 
-    def __init__(self, epd, font):
+    def __init__(self, epd, font, snapshot_path=None):
         self._epd = epd
         self._font = font
         self._initialized = False
+        self.snapshot_path = snapshot_path
 
     @property
     def font(self):
@@ -285,6 +394,8 @@ class Display:
 
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
+        if self.snapshot_path:
+            img.save(self.snapshot_path)
         if not self._initialized:
             self._epd.init()
             self._epd.display(self._epd.getbuffer(img))
@@ -322,6 +433,9 @@ def setup_ui_handlers(
             status_bar.set_battery(battery)
         if wifi is not None:
             status_bar.set_wifi(wifi)
+            for v in active_view:
+                if hasattr(v, '_wifi'):
+                    v._wifi = wifi
 
     def on_legend_update(text, **kw):
         legend.set_text(text)
@@ -339,4 +453,11 @@ def load_font(size=15):
     font_path = os.path.join(picdir, "Font.ttc")
     if os.path.exists(font_path):
         return ImageFont.truetype(font_path, size)
+    for path in [
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    ]:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    logger.warning("Nessun font trovato, uso default")
     return ImageFont.load_default()

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS files (
     uploaded_at REAL,
     pruned_at REAL,
     upload_error TEXT,
-    upload_attempts INTEGER NOT NULL DEFAULT 0
+    upload_attempts INTEGER NOT NULL DEFAULT 0,
+    mark_delete INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -39,6 +40,15 @@ class Database:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_pruned ON files(pruned_at);"
         )
+        self._migrate()
+
+    def _migrate(self):
+        try:
+            self.conn.execute(
+                "ALTER TABLE files ADD COLUMN mark_delete INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass
 
     def close(self):
         self.conn.close()
@@ -111,6 +121,44 @@ class Database:
         self.conn.execute(
             "UPDATE files SET pruned_at = ? WHERE id = ?",
             (time.time(), file_id),
+        )
+
+    def mark_deleted_files(
+        self, seen_hashes: set[str], remote_prefix: str
+    ) -> None:
+        pattern = remote_prefix + "%"
+        if seen_hashes:
+            placeholders = ",".join("?" for _ in seen_hashes)
+            self.conn.execute(
+                f"UPDATE files SET mark_delete = 0 WHERE file_hash IN ({placeholders})",
+                list(seen_hashes),
+            )
+            self.conn.execute(
+                f"UPDATE files SET mark_delete = 1 "
+                "WHERE uploaded_at IS NOT NULL "
+                "AND remote_path LIKE ? "
+                f"AND file_hash NOT IN ({placeholders})",
+                [pattern] + list(seen_hashes),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE files SET mark_delete = 1 "
+                "WHERE uploaded_at IS NOT NULL AND remote_path LIKE ?",
+                (pattern,),
+            )
+
+    def find_marked_for_deletion(self) -> list[FileRecord]:
+        cursor = self.conn.execute(
+            """SELECT * FROM files
+               WHERE mark_delete = 1 AND remote_path IS NOT NULL
+               ORDER BY id"""
+        )
+        return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def clear_deletion_mark(self, file_id: int) -> None:
+        self.conn.execute(
+            "UPDATE files SET mark_delete = 0, uploaded_at = NULL, remote_path = NULL, cache_path = NULL WHERE id = ?",
+            (file_id,),
         )
 
     def count_cached(self) -> int:

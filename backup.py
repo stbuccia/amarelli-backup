@@ -13,6 +13,7 @@ class State(Enum):
     IDLE = auto()
     CACHING = auto()
     UPLOADING = auto()
+    REMOTE_CLEANUP = auto()
     PRUNING = auto()
     COMPLETED = auto()
     PAUSED = auto()
@@ -23,18 +24,20 @@ class State(Enum):
 _PHASES = [
     (State.CACHING, "_cache", "copy"),
     (State.UPLOADING, "_uploader", "upload"),
+    (State.REMOTE_CLEANUP, "_uploader", "cleanup_remote"),
     (State.PRUNING, "_cache", "prune"),
 ]
 
 
 class Backup:
-    def __init__(self, cache, uploader, db, bus=None, max_retries=3, retry_delay=5):
+    def __init__(self, cache, uploader, db, bus=None, max_retries=3, retry_delay=5, mode="upload"):
         self._cache = cache
         self._uploader = uploader
         self._db = db
         self._bus = bus or EventBus()
         self._max_retries = max_retries
         self._retry_delay = retry_delay
+        self._mode = mode
         self._state = State.IDLE
         self._resume_state = State.IDLE
         self._cancel = threading.Event()
@@ -45,7 +48,7 @@ class Backup:
 
     @property
     def is_active(self) -> bool:
-        return self._state in (State.CACHING, State.UPLOADING, State.PRUNING)
+        return self._state in (State.CACHING, State.UPLOADING, State.REMOTE_CLEANUP, State.PRUNING)
 
     def start(self) -> bool:
         if self._state != State.IDLE:
@@ -89,6 +92,8 @@ class Backup:
                 return self._cache.count_uncached() if self._cache else 0
             elif state == State.UPLOADING:
                 return self._db.count_pending_uploads()
+            elif state == State.REMOTE_CLEANUP:
+                return len(self._db.find_marked_for_deletion())
             elif state == State.PRUNING:
                 return len(self._db.find_uploaded_not_pruned())
         except Exception:
@@ -109,6 +114,11 @@ class Backup:
                     break
 
             for state, obj_attr, method_name in _PHASES[phase_idx:]:
+                if self._mode == "upload" and state == State.REMOTE_CLEANUP:
+                    continue
+                if self._mode == "mirror" and state == State.PRUNING:
+                    continue
+
                 obj = getattr(self, obj_attr)
                 if obj is None:
                     continue
@@ -145,6 +155,17 @@ class Backup:
                 if self._cancel.is_set():
                     self._set_state(State.PAUSED)
                     return
+
+                if (
+                    state == State.CACHING
+                    and self._mode == "mirror"
+                    and self._cache is not None
+                    and self._uploader is not None
+                ):
+                    self._db.mark_deleted_files(
+                        self._cache.last_seen_hashes,
+                        self._uploader.cloud_dst,
+                    )
 
             self._set_state(State.COMPLETED)
 

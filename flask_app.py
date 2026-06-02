@@ -20,6 +20,14 @@ def get_ip_address() -> str:
 def create_app(wifi_manager=None, db=None):
     app = Flask(__name__)
 
+    @app.route("/generate_204")
+    @app.route("/nm/generate_204")
+    @app.route("/hotspot-detect.html")
+    @app.route("/library/test/success.html")
+    @app.route("/success.txt")
+    def captive_check():
+        return "", 204
+
     @app.route("/")
     def index():
         networks = []

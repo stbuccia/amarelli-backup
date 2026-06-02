@@ -15,3 +15,4 @@ class FileRecord:
     pruned_at: float | None = None
     upload_error: str | None = None
     upload_attempts: int = 0
+    mark_delete: int = 0

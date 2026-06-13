@@ -17,7 +17,7 @@ parser.add_argument(
     "--mock", action="store_true", help="Use mock EPD (software rendering, no hardware)"
 )
 parser.add_argument(
-    "--imagick", action="store_true", help="Usa ImageMagick display per preview live del display"
+    "--imagick", action="store_true", help="Use ImageMagick display for live preview"
 )
 args = parser.parse_args()
 
@@ -199,9 +199,9 @@ def _loop(
     def _start_flask(wm=None):
         nonlocal flask_thread
         if flask_thread is not None and flask_thread.is_alive():
-            logger.info("Flask già avviato")
+            logger.info("Flask already running")
             return
-        app = create_app(wifi_manager=wm, db=db)
+        app = create_app(wifi_manager=wm, db=db, bus=bus)
         flask_thread = threading.Thread(
             target=app.run,
             kwargs={"host": "0.0.0.0", "port": 5000, "debug": False, "use_reloader": False},
@@ -212,7 +212,7 @@ def _loop(
 
     def start_hotspot(**kw):
         nonlocal wifi_manager, flask_thread
-        logger.info("[MENU] Avvio AP + Flask...")
+        logger.info("[MENU] Starting AP + Flask...")
 
         wifi_manager = WiFiManager(config)
         try:
@@ -228,9 +228,9 @@ def _loop(
             sb.set_title(f"AP: {ssid}")
             legend.set_text(f"IP: {WiFiManager.AP_IP}:5000")
             display.render_full(active_view[0], sb, legend)
-            logger.info("AP '%s' avviato su %s", ssid, wifi_manager.AP_IP)
+            logger.info("AP '%s' started on %s", ssid, wifi_manager.AP_IP)
         except Exception as e:
-            logger.error("Errore avvio AP: %s", e)
+            logger.error("Error starting AP: %s", e)
             legend.set_text("AP error!")
             display.render_full(active_view[0], sb, legend)
             return
@@ -241,8 +241,10 @@ def _loop(
     bus.on("wifi:connect", lambda **kw: start_hotspot())
 
     def start_web_server(**kw):
-        logger.info("[MENU] Avvio solo server web...")
-        _start_flask(None)
+        nonlocal wifi_manager
+        logger.info("[MENU] Starting web server...")
+        wifi_manager = WiFiManager(config)
+        _start_flask(wifi_manager)
         ip = get_ip_address()
         sb.set_title(f"Server: {ip}:5000")
         legend.set_text("\u25c0 back")
@@ -261,12 +263,12 @@ def _loop(
 
     def stop_hotspot(**kw):
         nonlocal wifi_manager, flask_thread
-        logger.info("[MENU] Arresto AP...")
+        logger.info("[MENU] Stopping AP...")
         if wifi_manager:
             try:
                 wifi_manager.stop_ap()
             except Exception as e:
-                logger.error("Errore arresto AP: %s", e)
+                logger.error("Error stopping AP: %s", e)
         sb.set_wifi(False)
         sb.set_title("Amarelli")
         legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
@@ -279,7 +281,7 @@ def _loop(
     def on_system_status(**kw):
         status_view.refresh()
         request_redraw()
-        logger.info("[MENU] Stato sistema aggiornato")
+        logger.info("[MENU] System status updated")
 
     bus.on("system:status", on_system_status)
 
@@ -289,9 +291,9 @@ def _loop(
             _imagick_proc = subprocess.Popen(
                 ["display", "-update", "1", "display_output.png"]
             )
-            print(f"[imagick] ImageMagick display avviato (pid {_imagick_proc.pid})")
+            print(f"[imagick] ImageMagick display started (pid {_imagick_proc.pid})")
         except FileNotFoundError:
-            print("[imagick] 'display' non trovato. Installa ImageMagick.")
+            print("[imagick] 'display' not found. Install ImageMagick.")
 
     print("Amarelli interactive. \u25b6 action, \u25c0 back, Q quit.")
     if mock:

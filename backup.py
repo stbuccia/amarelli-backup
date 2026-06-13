@@ -163,9 +163,23 @@ class Backup:
                     and self._uploader is not None
                 ):
                     self._db.mark_deleted_files(
-                        self._cache.last_seen_hashes,
+                        self._cache.last_seen_paths,
                         self._uploader.cloud_dst,
                     )
+
+                    prefix = self._uploader.cloud_dst
+                    total = self._db.count_uploaded_for_prefix(prefix)
+                    marked = self._db.count_marked_for_deletion(prefix)
+                    if total > 0 and marked >= total:
+                        logger.warning(
+                            "Redirect: tutti i %d file remoti cancellati, cambio destinazione",
+                            total,
+                        )
+                        self._db.clear_deletion_marks_for_prefix(prefix)
+                        new_dst = f"{prefix}_{int(time.time())}"
+                        self._uploader.cloud_dst = new_dst
+                        self._bus.emit("config:set", key="cloud_dst", value=new_dst)
+                        logger.info("Nuova destinazione remota: %s", new_dst)
 
             self._set_state(State.COMPLETED)
 

@@ -29,16 +29,18 @@ class WebDav:
         self.db = db
         self._bus = bus or EventBus()
         self.cache_path = cfg.cache_path
-        self._cloud_dst = "/"
+        self._cloud_dst = cfg.cloud_dst
 
     @property
     def cloud_dst(self) -> str:
         return self._cloud_dst
 
+    @cloud_dst.setter
+    def cloud_dst(self, value: str) -> None:
+        self._cloud_dst = value
+
     def upload(self):
-        today_str = ""
-        cloud_dst = "/" + today_str
-        self._cloud_dst = cloud_dst
+        cloud_dst = self._cloud_dst
         local_src = Path(self.cache_path)
 
         try:

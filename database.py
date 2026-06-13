@@ -1,15 +1,17 @@
 import sqlite3
 import time
+import logging
 from pathlib import Path
 
 from models import FileRecord
 
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY,
-    file_hash TEXT UNIQUE NOT NULL,
-    sd_path TEXT NOT NULL,
+    file_hash TEXT NOT NULL,
+    sd_path TEXT UNIQUE NOT NULL,
     cache_path TEXT,
     remote_path TEXT,
     size_bytes INTEGER NOT NULL,
@@ -49,6 +51,42 @@ class Database:
             )
         except Exception:
             pass
+        try:
+            cursor = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='files'"
+            )
+            sql = cursor.fetchone()[0]
+            if "file_hash TEXT UNIQUE" in sql:
+                logger.info("Migrating database schema: UNIQUE(file_hash) -> UNIQUE(sd_path)")
+                self.conn.executescript("""
+                    CREATE TABLE files_new (
+                        id INTEGER PRIMARY KEY,
+                        file_hash TEXT NOT NULL,
+                        sd_path TEXT UNIQUE NOT NULL,
+                        cache_path TEXT,
+                        remote_path TEXT,
+                        size_bytes INTEGER NOT NULL,
+                        mtime REAL NOT NULL,
+                        cached_at REAL,
+                        uploaded_at REAL,
+                        pruned_at REAL,
+                        upload_error TEXT,
+                        upload_attempts INTEGER NOT NULL DEFAULT 0,
+                        mark_delete INTEGER NOT NULL DEFAULT 0
+                    );
+                    INSERT INTO files_new SELECT * FROM files;
+                    DROP TABLE files;
+                    ALTER TABLE files_new RENAME TO files;
+                """)
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_files_uploaded ON files(uploaded_at);"
+                )
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_files_pruned ON files(pruned_at);"
+                )
+                logger.info("Database migration complete")
+        except Exception as e:
+            logger.warning("Schema migration skipped: %s", e)
 
     def close(self):
         self.conn.close()
@@ -56,12 +94,18 @@ class Database:
     def _row_to_record(self, row) -> FileRecord:
         return FileRecord(*row)
 
-    def find_by_hash(self, file_hash: str) -> FileRecord | None:
+    def find_by_sd_path(self, sd_path: str) -> FileRecord | None:
         cursor = self.conn.execute(
-            "SELECT * FROM files WHERE file_hash = ?", (file_hash,)
+            "SELECT * FROM files WHERE sd_path = ?", (sd_path,)
         )
         row = cursor.fetchone()
         return self._row_to_record(row) if row else None
+
+    def find_by_hash(self, file_hash: str) -> list[FileRecord]:
+        cursor = self.conn.execute(
+            "SELECT * FROM files WHERE file_hash = ?", (file_hash,)
+        )
+        return [self._row_to_record(row) for row in cursor.fetchall()]
 
     def create(
         self,
@@ -77,7 +121,20 @@ class Database:
                VALUES (?, ?, ?, ?, ?, ?)""",
             (file_hash, sd_path, cache_path, size_bytes, mtime, now),
         )
-        return self.find_by_hash(file_hash)
+        return self.find_by_sd_path(sd_path)
+
+    def re_cache(
+        self, file_hash: str, sd_path: str, cache_path: str, size_bytes: int, mtime: float
+    ) -> FileRecord:
+        now = time.time()
+        self.conn.execute(
+            """UPDATE files SET file_hash = ?, cache_path = ?, size_bytes = ?, mtime = ?,
+               cached_at = ?, uploaded_at = NULL, remote_path = NULL,
+               upload_error = NULL, upload_attempts = 0, pruned_at = NULL, mark_delete = 0
+               WHERE sd_path = ?""",
+            (file_hash, cache_path, size_bytes, mtime, now, sd_path),
+        )
+        return self.find_by_sd_path(sd_path)
 
     def mark_uploaded(self, file_id: int, remote_path: str) -> None:
         self.conn.execute(
@@ -124,21 +181,21 @@ class Database:
         )
 
     def mark_deleted_files(
-        self, seen_hashes: set[str], remote_prefix: str
+        self, seen_paths: set[str], remote_prefix: str
     ) -> None:
         pattern = remote_prefix + "%"
-        if seen_hashes:
-            placeholders = ",".join("?" for _ in seen_hashes)
+        if seen_paths:
+            placeholders = ",".join("?" for _ in seen_paths)
             self.conn.execute(
-                f"UPDATE files SET mark_delete = 0 WHERE file_hash IN ({placeholders})",
-                list(seen_hashes),
+                f"UPDATE files SET mark_delete = 0 WHERE sd_path IN ({placeholders})",
+                list(seen_paths),
             )
             self.conn.execute(
                 f"UPDATE files SET mark_delete = 1 "
                 "WHERE uploaded_at IS NOT NULL "
                 "AND remote_path LIKE ? "
-                f"AND file_hash NOT IN ({placeholders})",
-                [pattern] + list(seen_hashes),
+                f"AND sd_path NOT IN ({placeholders})",
+                [pattern] + list(seen_paths),
             )
         else:
             self.conn.execute(
@@ -159,6 +216,26 @@ class Database:
         self.conn.execute(
             "UPDATE files SET mark_delete = 0, uploaded_at = NULL, remote_path = NULL, cache_path = NULL WHERE id = ?",
             (file_id,),
+        )
+
+    def count_marked_for_deletion(self, remote_prefix: str) -> int:
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE mark_delete = 1 AND remote_path LIKE ?",
+            (remote_prefix + "%",),
+        )
+        return cursor.fetchone()[0]
+
+    def count_uploaded_for_prefix(self, remote_prefix: str) -> int:
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE uploaded_at IS NOT NULL AND remote_path LIKE ?",
+            (remote_prefix + "%",),
+        )
+        return cursor.fetchone()[0]
+
+    def clear_deletion_marks_for_prefix(self, remote_prefix: str) -> None:
+        self.conn.execute(
+            "UPDATE files SET mark_delete = 0 WHERE mark_delete = 1 AND remote_path LIKE ?",
+            (remote_prefix + "%",),
         )
 
     def count_cached(self) -> int:

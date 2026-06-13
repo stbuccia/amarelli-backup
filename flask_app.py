@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 import subprocess
 
 from flask import Flask, request, jsonify, redirect
@@ -17,7 +19,59 @@ def get_ip_address() -> str:
         return "N/A"
 
 
-def create_app(wifi_manager=None, db=None):
+def _signal_bars(pct: int) -> str:
+    if pct >= 75:
+        return "\u2582\u2584\u2586\u2588"
+    if pct >= 50:
+        return "\u2582\u2584\u2586"
+    if pct >= 25:
+        return "\u2582\u2584"
+    return "\u2582"
+
+
+def _h(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+CSS = """* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; color: #1c1e21; padding: 0; }
+.header { background: #fff; padding: 14px 16px; border-bottom: 1px solid #dadde1; display: flex; align-items: center; gap: 10px; }
+.header h1 { font-size: 1.15em; font-weight: 600; flex: 1; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.dot-on { background: #31a24c; }
+.dot-off { background: #dadde1; }
+.card { background: #fff; margin: 12px 12px 0; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.06); overflow: hidden; }
+.card-title { font-size: .8em; font-weight: 600; color: #65676b; text-transform: uppercase; letter-spacing: .04em; padding: 12px 16px 4px; }
+.row { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid #f0f2f5; text-decoration: none; color: inherit; min-height: 44px; }
+.row:first-child { border-top: none; }
+.row .name { flex: 1; font-size: .95em; font-weight: 500; }
+.row .name small { font-weight: 400; color: #65676b; font-size: .85em; display: block; }
+.row .signal { color: #65676b; font-size: .9em; white-space: nowrap; }
+.row .actions { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-link { background: none; border: none; color: #216fdb; font-size: .85em; cursor: pointer; padding: 4px 6px; border-radius: 4px; }
+.btn-link:hover { background: #e7f3ff; }
+.btn-link.danger { color: #e41e3f; }
+.btn-link.danger:hover { background: #ffe9ec; }
+input[type=text], input[type=password] { width: 100%; padding: 10px 12px; border: 1px solid #ccd0d5; border-radius: 6px; font-size: .95em; outline: none; }
+input[type=text]:focus, input[type=password]:focus { border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }
+.pwd-row { display: flex; align-items: center; gap: 6px; padding: 6px 16px 12px; }
+.pwd-row input { flex: 1; }
+.btn-eye { background: none; border: 1px solid #ccd0d5; border-radius: 6px; padding: 8px 10px; cursor: pointer; font-size: 1em; line-height: 1; }
+.btn-block { display: block; width: calc(100% - 32px); margin: 0 16px 12px; padding: 10px; border: none; border-radius: 8px; font-size: .95em; font-weight: 600; cursor: pointer; text-align: center; }
+.btn-primary { background: #216fdb; color: #fff; }
+.btn-primary:hover { background: #1a5fc7; }
+.btn-success { background: #31a24c; color: #fff; }
+.btn-success:hover { background: #28853b; }
+.btn-danger { background: #e41e3f; color: #fff; }
+.btn-danger:hover { background: #c91836; }
+.text-muted { color: #65676b; font-size: .82em; padding: 12px 16px; }
+.flash { padding: 10px 16px; font-size: .9em; margin: 8px 12px 0; border-radius: 8px; }
+.flash-success { background: #d4edda; color: #155724; }
+.flash-error { background: #f8d7da; color: #721c24; }
+.empty { color: #65676b; font-size: .88em; padding: 14px 16px; }"""
+
+
+def create_app(wifi_manager=None, db=None, bus=None):
     app = Flask(__name__)
 
     @app.route("/generate_204")
@@ -30,102 +84,140 @@ def create_app(wifi_manager=None, db=None):
 
     @app.route("/")
     def index():
-        networks = []
-        current_ssid = "N/A"
+        if not wifi_manager:
+            return """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Amarelli</title>
+<style>body{font-family:-apple-system,sans-serif;padding:16px;background:#f0f2f5;color:#1c1e21}
+h1{font-size:1.2em}.card{background:#fff;border-radius:10px;padding:16px;margin-top:12px}</style>
+</head><body><div class="card"><h1>Amarelli Backup</h1>
+<p class="text-muted">No WiFi manager available.</p></div></body></html>"""
+
+        networks = wifi_manager.scan_networks()
+        current = wifi_manager.get_current_ssid()
+        saved = wifi_manager.get_saved_connections()
+        online = wifi_manager.check_internet()
         ip = get_ip_address()
-        ap_active = False
+        ap_active = wifi_manager.is_ap_active()
 
-        if wifi_manager:
-            networks = wifi_manager.scan_networks()
-            ap_active = wifi_manager.is_ap_active()
-            try:
-                import nmcli
-                statuses = nmcli.device.status()
-                for dev in statuses:
-                    if dev.device == wifi_manager.ifname and dev.connection:
-                        current_ssid = dev.connection
-                        break
-            except Exception:
-                pass
+        connected = current or "N/A"
+        online_dot = "dot-on" if online else "dot-off"
+        online_label = "Connected to Internet" if online else "Not connected"
 
-        rows = ""
-        for n in networks:
-            signal_bars = "▂▄▆█" if n["signal"] >= 75 else "▂▄▆" if n["signal"] >= 50 else "▂▄" if n["signal"] >= 25 else "▂"
-            checked = " checked" if n["ssid"] == current_ssid else ""
-            rows += f"""<tr>
-                <td><input type="radio" name="ssid" value="{n["ssid"]}"{checked}></td>
-                <td>{n["ssid"]}</td>
-                <td>{signal_bars} {n["signal"]}%</td>
-                <td>{n["security"] if n["security"] else "Aperta"}</td>
-            </tr>"""
+        seen_ssids = {n["ssid"] for n in networks}
 
-        ap_badge = '<span class="badge badge-on">AP Attivo</span>' if ap_active else '<span class="badge badge-off">AP Spento</span>'
+        saved_known = [s for s in saved if s != current and s in seen_ssids]
+        saved_other = [s for s in saved if s != current and s not in seen_ssids]
+        available = [n for n in networks if n["ssid"] and n["ssid"] != current]
+
+        known_rows = ""
+        for ssid in saved_known:
+            known_rows += f"""<div class="row">
+<div class="name">{_h(ssid)} <small>Saved</small></div>
+<div class="actions">
+<form method="post" action="/connect" style="display:inline">
+<input type="hidden" name="ssid" value="{_h(ssid)}">
+<button class="btn-link">Connect</button>
+</form>
+<button class="btn-link" onclick="showPwdForm('{_h(ssid)}')">Password</button>
+<form method="post" action="/forget" style="display:inline"
+onsubmit="return confirm('Forget &quot;{_h(ssid)}&quot;?')">
+<input type="hidden" name="ssid" value="{_h(ssid)}">
+<button class="btn-link danger">Forget</button>
+</form>
+</div></div>"""
+
+        saved_hidden = ""
+        for ssid in saved_other:
+            saved_hidden += f"""<div class="row">
+<div class="name">{_h(ssid)} <small>Not in range</small></div>
+<div class="actions">
+<button class="btn-link" onclick="showPwdForm('{_h(ssid)}')">Password</button>
+<form method="post" action="/forget" style="display:inline"
+onsubmit="return confirm('Forget &quot;{_h(ssid)}&quot;?')">
+<input type="hidden" name="ssid" value="{_h(ssid)}">
+<button class="btn-link danger">Forget</button>
+</form>
+</div></div>"""
+
+        avail_rows = ""
+        for n in available:
+            sec = n["security"] if n["security"] else "Open"
+            bars = _signal_bars(n["signal"])
+            avail_rows += f"""<div class="row">
+<div class="name">{_h(n["ssid"])} <small>{sec}</small></div>
+<div class="signal">{bars} {n["signal"]}%</div>
+<div class="actions">
+<form method="post" action="/connect" style="display:inline">
+<input type="hidden" name="ssid" value="{_h(n["ssid"])}">
+<button class="btn-link">Connect</button>
+</form>
+</div></div>"""
+
+        ap_badge = ""
+        if ap_active:
+            ap_badge = '<div class="text-muted" style="padding-top:0">AP: {ip}:5000</div>'
 
         return f"""<!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Amarelli - Connessioni</title>
-<style>
-* {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ font-family: -apple-system, sans-serif; background: #f5f5f5; color: #333; padding: 16px; }}
-h1 {{ font-size: 1.4em; margin-bottom: 4px; }}
-h2 {{ font-size: 1.1em; margin: 20px 0 10px; }}
-.card {{ background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
-.badge {{ display: inline-block; font-size: .8em; padding: 2px 8px; border-radius: 20px; }}
-.badge-on {{ background: #d4edda; color: #155724; }}
-.badge-off {{ background: #e2e3e5; color: #383d41; }}
-table {{ width: 100%; border-collapse: collapse; }}
-th, td {{ text-align: left; padding: 8px 4px; border-bottom: 1px solid #eee; }}
-th {{ font-size: .8em; color: #888; }}
-input[type=radio] {{ transform: scale(1.2); }}
-input[type=text], input[type=password] {{ width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1em; margin: 4px 0; }}
-.btn {{ display: inline-block; padding: 10px 20px; border: none; border-radius: 8px; font-size: 1em; cursor: pointer; }}
-.btn-primary {{ background: #007bff; color: #fff; }}
-.btn-success {{ background: #28a745; color: #fff; }}
-.btn-block {{ width: 100%; }}
-.mt {{ margin-top: 12px; }}
-.text-muted {{ color: #888; font-size: .85em; }}
-.flash {{ padding: 10px; border-radius: 8px; margin-bottom: 12px; }}
-.flash-success {{ background: #d4edda; color: #155724; }}
-.flash-error {{ background: #f8d7da; color: #721c24; }}
-</style>
+<title>Amarelli WiFi</title>
+<style>{CSS}</style>
 </head>
 <body>
-<div class="card">
-<h1>Amarelli Backup</h1>
-<p class="text-muted">IP: {ip} &middot; {ap_badge}</p>
-</div>
 
+<div class="header">
+<span class="dot {online_dot}" title="{online_label}"></span>
+<h1>Amarelli Backup</h1>
+<a href="/config" style="font-size:1.1em;text-decoration:none;color:#65676b" title="Settings">\u2699</a>
+<span class="text-muted" style="font-size:.82em">{ip}</span>
+</div>
+{ap_badge}
 <div id="msg"></div>
 
 <div class="card">
-<h2>Reti disponibili</h2>
-<form id="connect-form" method="post" action="/connect">
-<table>
-<thead><tr><th></th><th>Rete</th><th>Segnale</th><th>Sicurezza</th></tr></thead>
-<tbody>{rows}</tbody>
-</table>
-<div class="mt">
-<input type="password" name="password" placeholder="Password (se richiesta)">
-<button type="submit" class="btn btn-primary btn-block mt">Connetti</button>
-</div>
+<div class="card-title">Connected</div>
+<div class="row">
+<div class="name">{_h(connected)}</div>
+<div class="actions">
+<form method="post" action="/disconnect" style="display:inline"
+onsubmit="return confirm('Disconnect from &quot;{_h(connected)}&quot;?')">
+<button class="btn-link danger">Disconnect</button>
 </form>
+</div>
+</div>
 </div>
 
 <div class="card">
-<h2>Aggiungi nuova rete</h2>
-<form method="post" action="/add">
-<input type="text" name="ssid" placeholder="Nome rete (SSID)" required>
-<input type="password" name="password" placeholder="Password">
-<button type="submit" class="btn btn-success btn-block mt">Aggiungi e connetti</button>
-</form>
+<div class="card-title">Saved networks</div>
+{known_rows if known_rows else '<div class="empty">No saved networks.</div>'}
 </div>
 
 <div class="card">
-<h2>Stato connessione</h2>
-<p><a href="/status" class="btn btn-primary">Verifica stato</a></p>
+<div class="card-title">Available networks</div>
+{avail_rows if avail_rows else '<div class="empty">No networks found.</div>'}
+</div>
+
+<div class="card">
+<div class="card-title">Add new network</div>
+<div class="pwd-row">
+<input type="text" id="new-ssid" placeholder="SSID">
+</div>
+<div class="pwd-row">
+<input type="password" id="new-pwd" placeholder="Password (if required)">
+<button type="button" class="btn-eye" onclick="toggleNew()" aria-label="Show/Hide">\U0001F441</button>
+</div>
+<button class="btn btn-block btn-success" onclick="addNetwork()">Add & connect</button>
+</div>
+
+<div class="card" id="pwd-card" style="display:none">
+<div class="card-title">Change password</div>
+<div class="pwd-row">
+<input type="password" id="chg-pwd" placeholder="New password">
+<button type="button" class="btn-eye" onclick="toggleChg()" aria-label="Show/Hide">\U0001F441</button>
+</div>
+<button class="btn btn-block btn-primary" onclick="changePwd()">Save password</button>
 </div>
 
 <script>
@@ -135,10 +227,48 @@ const err = params.get('err');
 const msg = document.getElementById('msg');
 if (ok) msg.innerHTML = '<div class="flash flash-success">' + ok + '</div>';
 if (err) msg.innerHTML = '<div class="flash flash-error">' + err + '</div>';
-document.getElementById('connect-form').addEventListener('submit', function(e) {{
-    var sel = this.querySelector('input[name=ssid]:checked');
-    if (!sel) {{ e.preventDefault(); alert('Seleziona una rete WiFi.'); }}
-}});
+
+var _chgSsid = '';
+
+function showPwdForm(ssid) {{
+    _chgSsid = ssid;
+    document.getElementById('pwd-card').style.display = 'block';
+    document.getElementById('chg-pwd').value = '';
+    document.getElementById('pwd-card').scrollIntoView({{ behavior: 'smooth' }});
+}}
+
+function changePwd() {{
+    var pwd = document.getElementById('chg-pwd').value;
+    if (!pwd) return alert('Please enter a password.');
+    var f = document.createElement('form');
+    f.method = 'post';
+    f.action = '/change-password';
+    f.innerHTML = '<input name="ssid" value="' + _chgSsid + '"><input name="password" value="' + pwd + '">';
+    document.body.appendChild(f);
+    f.submit();
+}}
+
+function toggleNew() {{
+    var f = document.getElementById('new-pwd');
+    f.type = f.type === 'password' ? 'text' : 'password';
+}}
+
+function toggleChg() {{
+    var f = document.getElementById('chg-pwd');
+    f.type = f.type === 'password' ? 'text' : 'password';
+}}
+
+function addNetwork() {{
+    var ssid = document.getElementById('new-ssid').value;
+    var pwd = document.getElementById('new-pwd').value;
+    if (!ssid) return alert('Please enter the network name.');
+    var f = document.createElement('form');
+    f.method = 'post';
+    f.action = '/connect';
+    f.innerHTML = '<input name="ssid" value="' + ssid + '"><input name="password" value="' + pwd + '">';
+    document.body.appendChild(f);
+    f.submit();
+}}
 </script>
 </body>
 </html>"""
@@ -150,48 +280,204 @@ document.getElementById('connect-form').addEventListener('submit', function(e) {
     def connect():
         ssid = request.form.get("ssid", "").strip()
         password = request.form.get("password", "")
-        if not ssid:
-            return index()
-        if wifi_manager:
-            ok = wifi_manager.connect_to_network(ssid, password)
-            if ok:
-                return _redirect_with(f"?ok=Connesso+a+{ssid}")
-            return _redirect_with(f"?err=Errore+connessione+a+{ssid}")
-        return _redirect_with("?err=Nessun+gestore+WiFi")
+        if not ssid or not wifi_manager:
+            return _redirect_with("?err=No+WiFi+manager")
+        ok = wifi_manager.connect_to_network(ssid, password)
+        if ok:
+            return _redirect_with(f"?ok=Connected+to+{ssid}")
+        return _redirect_with(f"?err=Connection+failed+to+{ssid}")
 
-    @app.route("/add", methods=["POST"])
-    def add():
+    @app.route("/disconnect", methods=["POST"])
+    def disconnect():
+        if not wifi_manager:
+            return _redirect_with("?err=No+WiFi+manager")
+        wifi_manager.disconnect()
+        return _redirect_with("?ok=Disconnected")
+
+    @app.route("/forget", methods=["POST"])
+    def forget():
+        ssid = request.form.get("ssid", "").strip()
+        if not ssid or not wifi_manager:
+            return _redirect_with("?err=No+WiFi+manager")
+        wifi_manager.forget_connection(ssid)
+        return _redirect_with(f"?ok=Network+'{ssid}'+forgotten")
+
+    @app.route("/change-password", methods=["POST"])
+    def change_password():
         ssid = request.form.get("ssid", "").strip()
         password = request.form.get("password", "")
-        if not ssid:
-            return index()
-        if wifi_manager:
-            ok = wifi_manager.connect_to_network(ssid, password)
-            if ok:
-                return _redirect_with(f"?ok=Connesso+a+{ssid}")
-            return _redirect_with(f"?err=Errore+connessione+a+{ssid}")
-        return _redirect_with("?err=Nessun+gestore+WiFi")
+        if not ssid or not password or not wifi_manager:
+            return _redirect_with("?err=Missing+parameters")
+        wifi_manager.change_password(ssid, password)
+        return _redirect_with(f"?ok=Password+updated+for+'{ssid}'")
 
     @app.route("/status")
     def status():
-        ip = get_ip_address()
-        iface = wifi_manager.ifname if wifi_manager else "N/A"
-        ap_active = wifi_manager.is_ap_active() if wifi_manager else False
-        current_ssid = "N/A"
-        try:
-            import nmcli
-            statuses = nmcli.device.status()
-            for dev in statuses:
-                if dev.device == iface and dev.connection:
-                    current_ssid = dev.connection
-                    break
-        except Exception:
-            pass
+        if not wifi_manager:
+            return jsonify({"error": "no wifi manager"}), 503
         return jsonify({
-            "ip": ip,
-            "interface": iface,
-            "ap_active": ap_active,
-            "connected_ssid": current_ssid,
+            "ip": get_ip_address(),
+            "interface": wifi_manager.ifname,
+            "connected_ssid": wifi_manager.get_current_ssid(),
+            "ap_active": wifi_manager.is_ap_active(),
+            "online": wifi_manager.check_internet(),
+            "saved": wifi_manager.get_saved_connections(),
         })
+
+    @app.route("/config")
+    def config_page():
+        try:
+            with open("config.json") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+
+        def _val(key):
+            v = cfg.get(key)
+            if v is None:
+                return ""
+            return str(v)
+
+        def _select(name, current, options):
+            opts = ""
+            for val, label in options.items():
+                sel = ' selected' if str(val) == str(current) else ''
+                opts += f'<option value="{_h(val)}"{sel}>{_h(label)}</option>'
+            return f'<select name="{_h(name)}" style="width:100%;padding:10px 12px;border:1px solid #ccd0d5;border-radius:6px;font-size:.95em;outline:none;background:#fff">{opts}</select>'
+
+        def _text(name):
+            return f'<input type="text" name="{_h(name)}" value="{_h(_val(name))}" style="width:100%;padding:10px 12px;border:1px solid #ccd0d5;border-radius:6px;font-size:.95em;outline:none">'
+
+        prune_cur = cfg.get("prune_policy")
+        prune_display = "keep" if prune_cur is None else str(prune_cur)
+
+        mode_sel = _select("mode", _val("mode"), {"upload": "Upload only", "mirror": "Mirroring"})
+        filter_sel = _select("file_filter", _val("file_filter"), {"all": "All files", "images": "Photos only (JPG+RAW)", "jpg": "JPG only"})
+        prune_sel = _select("prune_policy", prune_display, {"immediate": "Delete now", "7": "After 7 days", "30": "After 30 days", "keep": "Keep forever"})
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amarelli Settings</title>
+<style>{CSS}
+select:focus {{ border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }}
+</style>
+</head>
+<body>
+
+<div class="header">
+<h1>Amarelli Backup</h1>
+<a href="/" style="font-size:1.1em;text-decoration:none;color:#65676b" title="WiFi">&larr; Back</a>
+<a href="/logs" style="font-size:.9em;text-decoration:none;color:#65676b" title="Logs">\U0001F4CB</a>
+</div>
+<div id="msg"></div>
+
+<form method="post" action="/config">
+
+<div class="card">
+<div class="card-title">Paths</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">SD source path</div>{_text("sd_src")}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Cache path</div>{_text("cache_path")}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Cloud destination</div>{_text("cloud_dst")}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Log path</div>{_text("log_path")}</div>
+</div>
+
+<div class="card">
+<div class="card-title">Backup</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Mode</div>{mode_sel}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">File filter</div>{filter_sel}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Prune policy</div>{prune_sel}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Prune min days</div>{_text("prune_min_days")}</div>
+</div>
+
+<div class="card">
+<div class="card-title">Server</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Flask host</div>{_text("flask_host")}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Flask port</div>{_text("flask_port")}</div>
+</div>
+
+<button class="btn btn-block btn-primary" style="margin-top:12px">Save changes</button>
+</form>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const ok = params.get('ok');
+const err = params.get('err');
+const msg = document.getElementById('msg');
+if (ok) msg.innerHTML = '<div class="flash flash-success">' + ok + '</div>';
+if (err) msg.innerHTML = '<div class="flash flash-error">' + err + '</div>';
+</script>
+</body>
+</html>"""
+
+    @app.route("/config", methods=["POST"])
+    def config_save():
+        if bus is None:
+            return _redirect_with("?err=No+config+manager")
+        for key in request.form:
+            value = request.form[key]
+            if key == "mode" or key == "file_filter":
+                bus.emit("config:set", key=key, value=value)
+            elif key == "prune_policy":
+                if value == "keep":
+                    bus.emit("config:set", key=key, value=None)
+                elif value == "immediate":
+                    bus.emit("config:set", key=key, value="immediate")
+                else:
+                    bus.emit("config:set", key=key, value=int(value))
+            elif key == "prune_min_days":
+                bus.emit("config:set", key=key, value=int(value) if value else 0)
+            elif key == "flask_port":
+                bus.emit("config:set", key=key, value=int(value) if value else 5000)
+            else:
+                bus.emit("config:set", key=key, value=value)
+        return _redirect_with("?ok=Settings+saved")
+
+    @app.route("/logs")
+    def logs():
+        try:
+            with open("amarelli.log") as f:
+                lines = f.readlines()
+        except Exception:
+            lines = ["(no log file)"]
+
+        tail = lines[-200:]
+        html_lines = ""
+        for line in tail:
+            esc = _h(line.rstrip("\n"))
+            html_lines += f"<div>{esc}</div>"
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amarelli Logs</title>
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace; background: #1e1e2e; color: #cdd6f4; padding: 0; }}
+.header {{ background: #181825; padding: 14px 16px; border-bottom: 1px solid #313244; display: flex; align-items: center; gap: 10px; }}
+.header h1 {{ font-size: 1.15em; font-weight: 600; flex: 1; }}
+.header a {{ color: #89b4fa; text-decoration: none; font-size: .9em; }}
+.entry {{ padding: 2px 16px; font-size: .78em; line-height: 1.5; border-bottom: 1px solid #313244; word-break: break-all; }}
+.entry:hover {{ background: #313244; }}
+.count {{ color: #6c7086; font-size: .8em; padding: 8px 16px; text-align: center; }}
+</style>
+</head>
+<body>
+
+<div class="header">
+<h1>Amarelli Logs</h1>
+<a href="/config">&larr; Settings</a>
+</div>
+
+<div class="count">{len(tail)} lines (last 200)</div>
+
+{html_lines}
+
+</body>
+</html>"""
 
     return app

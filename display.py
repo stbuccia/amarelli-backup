@@ -459,5 +459,5 @@ def load_font(size=15):
     ]:
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
-    logger.warning("Nessun font trovato, uso default")
+    logger.warning("No font found, using default")
     return ImageFont.load_default()

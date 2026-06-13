@@ -1,6 +1,12 @@
 {
+    "sd_src": "/home/stefano/Immagini/Schermate",
     "cache_path": "/tmp/",
+    "cloud_dst": "/tmp_1780590894_1780690013",
     "prune_min_days": 0,
     "log_path": "amarelli.log",
-    "prune_policy": "immediate"
+    "prune_policy": 30,
+    "mode": "mirror",
+    "file_filter": "jpg",
+    "flask_host": "0.0.0.0",
+    "flask_port": 5000
 }

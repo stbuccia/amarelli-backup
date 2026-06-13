@@ -3,6 +3,8 @@ import logging
 import nmcli
 from nmcli._exception import NotExistException
 
+nmcli.disable_use_sudo()
+
 
 log = logging.getLogger(__name__)
 
@@ -327,16 +329,26 @@ class WiFiManager:
         return unique
 
     def connect_to_network(self, ssid: str, password: str = "") -> bool:
+        import subprocess
         try:
             self.stop_ap()
         except Exception:
             pass
+        cmd = ["nmcli", "device", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        cmd += ["ifname", self.ifname]
         try:
-            nmcli.device.wifi_connect(ssid, password, ifname=self.ifname)
-            log.info("Connected to '%s'", ssid)
-            return True
-        except Exception as e:
-            log.error("Failed to connect to '%s': %s", ssid, e)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                log.info("Connected to '%s'", ssid)
+                return True
+            else:
+                detail = r.stderr.strip() or r.stdout.strip()
+                log.error("Failed to connect to '%s': %s", ssid, detail)
+                return False
+        except subprocess.TimeoutExpired:
+            log.error("Failed to connect to '%s': timeout", ssid)
             return False
 
     def is_ap_active(self) -> bool:
@@ -346,4 +358,91 @@ class WiFiManager:
         except NotExistException:
             return False
         except Exception:
+            return False
+
+    def get_current_ssid(self) -> str | None:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["nmcli", "-t", "-f", "TYPE,NAME,DEVICE", "connection", "show", "--active"],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in r.stdout.strip().splitlines():
+                if line.startswith("802-11-wireless:") and line.count(":") >= 2:
+                    parts = line.split(":", 2)
+                    if parts[2]:
+                        return parts[1]
+            return None
+        except Exception:
+            return None
+
+    def get_saved_connections(self) -> list[str]:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["nmcli", "-t", "-f", "TYPE,NAME", "connection", "show"],
+                capture_output=True, text=True, timeout=10
+            )
+            saved = []
+            for line in r.stdout.strip().splitlines():
+                if line.startswith("802-11-wireless:"):
+                    name = line.split(":", 1)[1]
+                    if name != self.AP_CONNECTION_NAME:
+                        saved.append(name)
+            return saved
+        except Exception:
+            return []
+
+    def check_internet(self) -> bool:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["nmcli", "networking", "connectivity", "check"],
+                capture_output=True, text=True, timeout=15
+            )
+            return r.stdout.strip() == "full"
+        except Exception:
+            return False
+
+    def forget_connection(self, ssid: str) -> bool:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["nmcli", "connection", "delete", ssid],
+                capture_output=True, text=True, timeout=10
+            )
+            if r.returncode == 0:
+                log.info("Forgot connection '%s'", ssid)
+                return True
+            log.error("Failed to forget '%s': %s", ssid, r.stderr.strip())
+            return False
+        except Exception as e:
+            log.error("Failed to forget '%s': %s", ssid, e)
+            return False
+
+    def disconnect(self) -> bool:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["nmcli", "device", "disconnect", self.ifname],
+                capture_output=True, text=True, timeout=10
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    def change_password(self, ssid: str, password: str) -> bool:
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["nmcli", "connection", "modify", ssid, "802-11-wireless-security.psk", password],
+                capture_output=True, text=True, timeout=10
+            )
+            if r.returncode == 0:
+                log.info("Password updated for '%s'", ssid)
+                return True
+            log.error("Failed to update password for '%s': %s", ssid, r.stderr.strip())
+            return False
+        except Exception as e:
+            log.error("Failed to update password for '%s': %s", ssid, e)
             return False

@@ -1,12 +1,3 @@
 Adesso
-- Cli 
-- Testare effettivamente la connessione tramite Web Server (elencare reti salvate)
-- Mettere a posto font
-- Sistemare font e icone 
+- Decidere cosa fare con le ultime opzioni del menù 
 - Daemon 
-- Wifi connection
-- Anche il logger gestito con eventi
-
-Inserire modalità controllo che file sia copiato a remoto e stessa cosa per la cache. Sicuro che lo voglio??
-Mettere nelle configurazioni: Solo foto, Solo JPG, tutti i file
-Gestire mancanza di spazio

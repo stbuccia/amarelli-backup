@@ -102,7 +102,7 @@ def run_interactive(epd):
     status_view = BackupStatusView(db, bus=bus)
     status_view.refresh()
 
-    keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(19, 20, 5, 6))
+    keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(19, 20, 26, 6))
 
     _loop(
         display,

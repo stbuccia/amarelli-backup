@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["main", "display", "menu", "config", "log", "cache", "database", "webdav_uploader", "wifi", "flask_app"]
+package-dir = {"" = "software"}
+py-modules = ["backup", "cache", "config", "database", "display", "eventbus", "exceptions", "flask_app", "keylistener", "log", "main", "menu", "models", "webdav_uploader", "wifi"]
 
 [project.scripts]
 amarelli = "main:main"

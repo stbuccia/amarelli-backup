@@ -6,9 +6,12 @@ import logging
 import time
 import subprocess
 import json
+from pathlib import Path
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ASSETS_DIR = PROJECT_ROOT / "assets" / "images"
 
 parser = argparse.ArgumentParser(
     description="Amarelli photo backup device - interactive UI"
@@ -75,7 +78,7 @@ def get_ip_address() -> str:
 
 def run_interactive(epd):
     font = load_font(14)
-    snapshot_path = "display_output.png" if args.imagick else None
+    snapshot_path = str(ASSETS_DIR / "display_output.png") if args.imagick else None
     display = Display(epd, font, snapshot_path=snapshot_path)
     display.init()
 
@@ -95,7 +98,7 @@ def run_interactive(epd):
 
     sb = StatusBar()
     legend = Legend()
-    with open("config.json") as f:
+    with open(PROJECT_ROOT / "config.json") as f:
         menu_cfg = json.load(f)
     menu = Menu(config=menu_cfg, bus=bus)
     menu_view = MenuView(menu, bus=bus)
@@ -289,7 +292,7 @@ def _loop(
     if imagick:
         try:
             _imagick_proc = subprocess.Popen(
-                ["display", "-update", "1", "display_output.png"]
+                ["display", "-update", "1", str(ASSETS_DIR / "display_output.png")]
             )
             print(f"[imagick] ImageMagick display started (pid {_imagick_proc.pid})")
         except FileNotFoundError:

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+from pathlib import Path
 
 from flask import Flask, request, jsonify, redirect
 
@@ -327,7 +328,7 @@ function addNetwork() {{
     @app.route("/config")
     def config_page():
         try:
-            with open("config.json") as f:
+            with open(Path(__file__).resolve().parent.parent / "config.json") as f:
                 cfg = json.load(f)
         except Exception:
             cfg = {}

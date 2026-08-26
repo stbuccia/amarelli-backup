@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime files
+amarelli.egg-info/
+amarelli.log
+files.db
+pic/
+
+# Local Waveshare dependency copied during device setup
+software/waveshare_epd/

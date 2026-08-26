@@ -1,10 +1,11 @@
 import os
 import json
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 
 
-CONFIG_FILE = "config.json"
+CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.json"
 logger = logging.getLogger(__name__)
 
 

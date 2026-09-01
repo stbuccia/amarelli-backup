@@ -50,9 +50,9 @@ MENU_TREE = [
     ),
     MenuItem(
         "Cache",
-        config_key="prune_min_days",
+        config_key="prune_policy",
         children=[
-            MenuItem("Delete now",  value=0),
+            MenuItem("Delete now",  value="immediate"),
             MenuItem("After 7 days",    value=7),
             MenuItem("After 30 days",   value=30),
             MenuItem("Keep forever",  value=None),
@@ -65,6 +65,17 @@ MENU_TREE = [
             MenuItem("All files",            value="all"),
             MenuItem("Photos only (JPG+RAW)",     value="images"),
             MenuItem("JPG only",                value="jpg"),
+        ],
+    ),
+    MenuItem("System status",
+             action=lambda: bus.emit("system:status")),
+    MenuItem(
+        "Power",
+        children=[
+            MenuItem("Shutdown",
+                     action=lambda: bus.emit("system:shutdown")),
+            MenuItem("Reboot",
+                     action=lambda: bus.emit("system:reboot")),
         ],
     ),
 ]
@@ -134,7 +145,7 @@ class Menu:
                 parent_items, parent_idx = self._stack[-1]
                 parent = parent_items[parent_idx]
                 parent_config_key = getattr(parent, 'config_key', None)
-            if parent_config_key is not None:
+            if parent_config_key is not None and item.value is not None:
                 self._set_config_value(parent_config_key, item.value)
                 self.back()
             elif item.action is not None:

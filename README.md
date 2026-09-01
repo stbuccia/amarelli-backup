@@ -31,3 +31,9 @@ Progetto DIY che consiste nel trasformare una scatola di liquerizia Amarelli in 
 
 ...
 + `nmcli connection delete "Amarelli AP"`
+
+## Assemblaggio
+
++ Prima max17043, sdi spi, led, reed switch
++ raspberry, powerboost
++ eink spi

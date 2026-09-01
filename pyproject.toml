@@ -12,12 +12,15 @@ dependencies = [
     "xxhash",
     "nmcli",
     "flask",
-    "spidev",
     "gpiozero",
+    "Pillow",
+]
+
+[project.optional-dependencies]
+raspberry-pi = [
+    "spidev",
     "lgpio",
     "RPi.GPIO",
-    "Pillow",
-    "waveshare_epd",
 ]
 
 [tool.setuptools]

@@ -47,8 +47,6 @@ class Cache:
         self.sd_src = Path(cfg.sd_src)
         self.local_dst = Path(cfg.cache_path)
         self.cfg = cfg
-        self._file_filter = getattr(cfg, "file_filter", "all")
-        self._prune_min_days = getattr(cfg, "prune_min_days", 0)
         self.check_existence_dirs()
 
         self.db = db
@@ -67,12 +65,8 @@ class Cache:
             if not path.is_dir():
                 raise Exception(str(path) + " is not a directory")
 
-    def prepare_backup(self):
-        self._file_filter = getattr(self.cfg, "file_filter", "all")
-        self._prune_min_days = getattr(self.cfg, "prune_min_days", 0)
-
     def _is_allowed_file(self, src: Path) -> bool:
-        filter_mode = self._file_filter
+        filter_mode = getattr(self.cfg, 'file_filter', 'all')
         if filter_mode == 'all':
             return True
         suffix = src.suffix.lower()
@@ -110,7 +104,6 @@ class Cache:
 
     def copy(self):
         self._last_seen_paths = set()
-        failures = []
 
         try:
             it = self.sd_src.walk()
@@ -120,16 +113,15 @@ class Cache:
         for root, dirs, filenames in it:
             for filename in filenames:
                 src = root / filename
-                # Mirroring needs every file present on the SD card, regardless
-                # of the upload filter, to distinguish filtered files from deletions.
-                self._last_seen_paths.add(str(src))
                 if not self._is_allowed_file(src):
                     continue
                 sd_path = str(src)
 
                 file_hash = xx_hash64(src)
+                if file_hash:
+                    self._last_seen_paths.add(sd_path)
+
                 if not file_hash:
-                    failures.append(f"cannot read {src}")
                     continue
 
                 if not self._needs_caching(sd_path, file_hash):
@@ -157,18 +149,11 @@ class Cache:
                     self._bus.emit("file:cached", file=record)
                 except Exception as e:
                     logger.error(f"Error copying {src}: {e}")
-                    failures.append(f"{src}: {e}")
-
-        if failures:
-            raise TransientError(f"Failed to cache {len(failures)} file(s): {'; '.join(failures)}")
 
     def prune(self):
-        if self._prune_min_days is None:
-            logger.info("Cache pruning is disabled")
-            return
         min_date = (
-            time.time() - (self._prune_min_days * 86400)
-            if self._prune_min_days
+            time.time() - (self.cfg.prune_min_days * 86400)
+            if self.cfg.prune_min_days
             else None
         )
 
@@ -176,7 +161,6 @@ class Cache:
             uploaded = self.db.find_uploaded_not_pruned(min_date)
         except Exception as e:
             raise TransientError(f"Database error during prune: {e}") from e
-        failures = []
         for f in uploaded:
             try:
                 path = Path(f.cache_path)
@@ -188,7 +172,3 @@ class Cache:
                 logger.info(f"Marked pruned: {f.id}")
             except Exception as e:
                 logger.error(f"Error pruning {f.id}: {e}")
-                failures.append(f"{f.id}: {e}")
-
-        if failures:
-            raise TransientError(f"Failed to prune {len(failures)} file(s): {'; '.join(failures)}")

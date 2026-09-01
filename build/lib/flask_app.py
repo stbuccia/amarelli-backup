@@ -349,12 +349,12 @@ function addNetwork() {{
         def _text(name):
             return f'<input type="text" name="{_h(name)}" value="{_h(_val(name))}" style="width:100%;padding:10px 12px;border:1px solid #ccd0d5;border-radius:6px;font-size:.95em;outline:none">'
 
-        prune_cur = cfg.get("prune_min_days")
+        prune_cur = cfg.get("prune_policy")
         prune_display = "keep" if prune_cur is None else str(prune_cur)
 
         mode_sel = _select("mode", _val("mode"), {"upload": "Upload only", "mirror": "Mirroring"})
         filter_sel = _select("file_filter", _val("file_filter"), {"all": "All files", "images": "Photos only (JPG+RAW)", "jpg": "JPG only"})
-        prune_sel = _select("prune_min_days", prune_display, {"immediate": "Delete now", "7": "After 7 days", "30": "After 30 days", "keep": "Keep forever"})
+        prune_sel = _select("prune_policy", prune_display, {"immediate": "Delete now", "7": "After 7 days", "30": "After 30 days", "keep": "Keep forever"})
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -390,6 +390,7 @@ select:focus {{ border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }}
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Mode</div>{mode_sel}</div>
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">File filter</div>{filter_sel}</div>
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Prune policy</div>{prune_sel}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Prune min days</div>{_text("prune_min_days")}</div>
 </div>
 
 <div class="card">
@@ -420,13 +421,15 @@ if (err) msg.innerHTML = '<div class="flash flash-error">' + err + '</div>';
             value = request.form[key]
             if key == "mode" or key == "file_filter":
                 bus.emit("config:set", key=key, value=value)
-            elif key == "prune_min_days":
+            elif key == "prune_policy":
                 if value == "keep":
-                    bus.emit("config:set", key="prune_min_days", value=None)
+                    bus.emit("config:set", key=key, value=None)
                 elif value == "immediate":
-                    bus.emit("config:set", key="prune_min_days", value=0)
+                    bus.emit("config:set", key=key, value="immediate")
                 else:
-                    bus.emit("config:set", key="prune_min_days", value=int(value))
+                    bus.emit("config:set", key=key, value=int(value))
+            elif key == "prune_min_days":
+                bus.emit("config:set", key=key, value=int(value) if value else 0)
             elif key == "flask_port":
                 bus.emit("config:set", key=key, value=int(value) if value else 5000)
             else:

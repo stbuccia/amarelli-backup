@@ -152,7 +152,8 @@ class Database:
         cursor = self.conn.execute(
             """SELECT * FROM files
                WHERE cache_path IS NOT NULL
-                  AND uploaded_at IS NULL
+                 AND uploaded_at IS NULL
+                 AND upload_error IS NULL
                ORDER BY cached_at"""
         )
         return [self._row_to_record(row) for row in cursor.fetchall()]
@@ -245,7 +246,7 @@ class Database:
 
     def count_pending_uploads(self) -> int:
         cursor = self.conn.execute(
-            "SELECT COUNT(*) FROM files WHERE cache_path IS NOT NULL AND uploaded_at IS NULL"
+            "SELECT COUNT(*) FROM files WHERE cache_path IS NOT NULL AND uploaded_at IS NULL AND upload_error IS NULL"
         )
         return cursor.fetchone()[0]
 

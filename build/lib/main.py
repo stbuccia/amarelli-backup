@@ -5,6 +5,7 @@ import argparse
 import logging
 import time
 import subprocess
+import json
 from pathlib import Path
 
 logging.basicConfig(level=logging.DEBUG)
@@ -122,7 +123,9 @@ def run_interactive(epd):
 
     sb = StatusBar()
     legend = Legend()
-    menu = Menu(config=config, bus=bus)
+    with open(PROJECT_ROOT / "config.json") as f:
+        menu_cfg = json.load(f)
+    menu = Menu(config=menu_cfg, bus=bus)
     menu_view = MenuView(menu, bus=bus)
     status_view = BackupStatusView(db, bus=bus)
     status_view.refresh()
@@ -300,6 +303,16 @@ def _loop(
         display.render_full(active_view[0], sb, legend)
 
     bus.on("wifi:reset", stop_hotspot)
+    bus.on("system:shutdown", lambda **kw: logger.info("[MENU] Shutdown..."))
+    bus.on("system:reboot", lambda **kw: logger.info("[MENU] Reboot..."))
+
+    def on_system_status(**kw):
+        status_view.refresh()
+        request_redraw()
+        logger.info("[MENU] System status updated")
+
+    bus.on("system:status", on_system_status)
+
     _imagick_proc = None
     if imagick:
         try:

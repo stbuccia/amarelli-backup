@@ -32,12 +32,6 @@ class Config:
         if bus:
             bus.on("config:set", self._on_config_set)
 
-    def get(self, key, default=None):
-        return getattr(self, key, default)
-
-    def __setitem__(self, key, value):
-        setattr(self, key, value)
-
     def _on_config_set(self, key, value, **kw):
         try:
             with open(CONFIG_FILE) as _f:
@@ -45,7 +39,6 @@ class Config:
             _cfg[key] = value
             with open(CONFIG_FILE, "w") as _f:
                 json.dump(_cfg, _f, indent=4)
-            setattr(self, key, value)
             logger.info("Config %s = %s (saved)", key, value)
         except Exception as _e:
             logger.warning("Failed to save config %s: %s", key, _e)

@@ -1,5 +1,4 @@
 import logging
-import re
 import threading
 import time
 from enum import Enum, auto
@@ -29,8 +28,6 @@ _PHASES = [
     (State.PRUNING, "_cache", "prune"),
 ]
 
-_TIMESTAMP_SUFFIX = re.compile(r"_\d+$")
-
 
 class Backup:
     def __init__(self, cache, uploader, db, bus=None, max_retries=3, retry_delay=5, mode="upload"):
@@ -41,11 +38,9 @@ class Backup:
         self._max_retries = max_retries
         self._retry_delay = retry_delay
         self._mode = mode
-        self._next_mode = mode
         self._state = State.IDLE
         self._resume_state = State.IDLE
         self._cancel = threading.Event()
-        self._bus.on("config:set", self._on_config_set)
 
     @property
     def state(self) -> State:
@@ -58,25 +53,10 @@ class Backup:
     def start(self) -> bool:
         if self._state != State.IDLE:
             return False
-        self._mode = self._next_mode
-        if self._cache:
-            self._cache.prepare_backup()
         self._cancel.clear()
         self._set_state(State.CACHING, reset=True)
         threading.Thread(target=self._run, daemon=True).start()
         return True
-
-    def _on_config_set(self, key, value, **kw):
-        if key == "mode":
-            self._next_mode = value
-            logger.info("Backup mode will change to %s on the next backup", value)
-
-    @staticmethod
-    def _new_cloud_destination(cloud_dst: str, timestamp: int) -> str:
-        base = cloud_dst
-        while _TIMESTAMP_SUFFIX.search(base):
-            base = _TIMESTAMP_SUFFIX.sub("", base)
-        return f"{base}_{timestamp}"
 
     def pause(self) -> bool:
         if not self.is_active and self._state != State.RETRYING:
@@ -196,7 +176,7 @@ class Backup:
                             total,
                         )
                         self._db.clear_deletion_marks_for_prefix(prefix)
-                        new_dst = self._new_cloud_destination(prefix, int(time.time()))
+                        new_dst = f"{prefix}_{int(time.time())}"
                         self._uploader.cloud_dst = new_dst
                         self._bus.emit("config:set", key="cloud_dst", value=new_dst)
                         logger.info("Nuova destinazione remota: %s", new_dst)

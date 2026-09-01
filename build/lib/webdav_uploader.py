@@ -4,7 +4,6 @@
 from webdav3.client import Client
 import logging
 from pathlib import Path
-from pathlib import PurePosixPath
 
 from exceptions import TransientError, PermanentError
 from eventbus import EventBus
@@ -40,22 +39,13 @@ class WebDav:
     def cloud_dst(self, value: str) -> None:
         self._cloud_dst = value
 
-    def _ensure_directory(self, directory: str) -> None:
-        path = PurePosixPath(directory)
-        current = "/" if path.is_absolute() else ""
-        for part in path.parts:
-            if part in ("/", "."):
-                continue
-            current = f"{current.rstrip('/')}/{part}" if current else part
-            if not self.client.check(current):
-                self.client.execute_request("mkdir", current)
-
     def upload(self):
         cloud_dst = self._cloud_dst
         local_src = Path(self.cache_path)
 
         try:
-            self._ensure_directory(cloud_dst)
+            if not self.client.check(cloud_dst):
+                self.client.execute_request("mkdir", cloud_dst)
         except Exception as e:
             err = str(e).lower()
             if any(kw in err for kw in ("401", "403", "unauthor", "forbidden")):
@@ -77,7 +67,8 @@ class WebDav:
             remote_dir = remote_path.parent
 
             try:
-                self._ensure_directory(str(remote_dir))
+                if not self.client.check(str(remote_dir)):
+                    self.client.execute_request("mkdir", str(remote_dir))
 
                 logger.info(f"Uploading {local_path} -> {remote_path}")
                 self.client.upload_sync(str(remote_path), str(local_path))
@@ -91,14 +82,14 @@ class WebDav:
                 error_count += 1
                 last_error = e
 
-        if error_count > 0 and last_error is not None:
+        if success_count == 0 and error_count > 0 and last_error is not None:
             err = str(last_error).lower()
             if any(kw in err for kw in ("401", "403", "unauthor", "forbidden")):
                 raise PermanentError(
-                    f"Auth error - {error_count} file(s) failed"
+                    f"Auth error - all {error_count} files failed"
                 ) from last_error
             raise TransientError(
-                f"{error_count} file(s) failed to upload"
+                f"All {error_count} files failed to upload"
             ) from last_error
 
     def cleanup_remote(self):

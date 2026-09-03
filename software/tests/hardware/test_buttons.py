@@ -1,7 +1,7 @@
 from gpiozero import Button
 from time import sleep
 buttons = []
-for pin, name in [(26, "BACK"), (6, "CONFIRM"), (19, "UP"), (20, "DOWN")]:
+for pin, name in [(5, "BACK"), (13, "UP"), (6, "DOWN"), (19, "CONFIRM")]:
     b = Button(pin, pull_up=True, bounce_time=0.05)
     b.when_pressed = lambda n=name: print(f"{n} premuto!")
     buttons.append(b)

@@ -19,6 +19,7 @@ Progetto DIY che consiste nel trasformare una scatola di liquerizia Amarelli in 
 ## Configurazione
 
 + Scarica ([ Raspberry Pi OS Lite (32-bit)](https://www.raspberrypi.com/software/operating-systems/)) e installa sulla scheda microSD, configurando il Wifi e la connessione SSH
++ Python 3.10 o successivo
 ...
 
 + `cp -r "~/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd" software/`

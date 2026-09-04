@@ -21,6 +21,7 @@ raspberry-pi = [
     "spidev",
     "lgpio",
     "RPi.GPIO",
+    "rpi_ws281x",
 ]
 
 [tool.setuptools]

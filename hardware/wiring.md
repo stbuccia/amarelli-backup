@@ -27,7 +27,7 @@ Raspberry
 
 + 5V (3.3V della raspberry)
 + GND (Pin 39)
-+ DIN (Pin 12)
++ DIN BCM 12 (Pin fisico 32, PWM0)
 
 # Buttons
 

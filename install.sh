@@ -86,4 +86,24 @@ else
     printf 'dtoverlay is unavailable; the overlay will be loaded at the next reboot.\n' >&2
 fi
 
+printf 'Configuring GPIO permissions for LEDs (rpi_ws281x)...\n'
+if id -nG "$USER" | tr ' ' '\n' | grep -qx gpio; then
+    printf 'User %s already in gpio group.\n' "$USER"
+else
+    if sudo usermod -a -G gpio,kmem,spi "$USER" 2>/dev/null; then
+        printf 'Added %s to gpio,kmem,spi groups (logout/login or reboot required).\n' "$USER"
+    else
+        printf 'Warning: could not add %s to gpio groups.\n' "$USER" >&2
+    fi
+fi
+if [[ ! -f /etc/udev/rules.d/99-gpio.rules ]]; then
+    printf 'Installing udev rule for gpiomem...\n'
+    echo 'SUBSYSTEM=="bcm2835-gpiomem", GROUP="gpio", MODE="0660"' | sudo tee /etc/udev/rules.d/99-gpio.rules >/dev/null
+    sudo udevadm control --reload-rules 2>/dev/null || true
+fi
+
 printf '\nInstallation complete. Reboot the Raspberry Pi to activate SPI and the SD-card reader.\n'
+printf 'Note: LED strip (rpi_ws281x on GPIO18/Pin12) needs /dev/mem access.\n'
+printf '  - After first install: reboot or logout/login to apply gpio group.\n'
+printf '  - Test LEDs with: sudo .venv/bin/python software/tests/hardware/test_led.py\n'
+printf '    (sudo may still be required for PWM/DMA on some kernels).\n'

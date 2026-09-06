@@ -1,12 +1,13 @@
 {
-    "sd_src": "/home/stefano/Immagini/Schermate",
-    "cache_path": "/tmp/",
+    "sd_src": "/mnt/amarelli-sd",
+    "cache_path": "/home/raspberry/amarelli/cache",
     "cloud_dst": "/tmp_1780590894_1780690013_1787774868",
-    "prune_min_days": 0,
-    "log_path": "amarelli.log",
+    "prune_min_days": null,
+    "log_path": "/home/raspberry/amarelli/amarelli.log",
+    "db_path": "/home/raspberry/amarelli/files.db",
     "prune_policy": 30,
-    "mode": "mirror",
-    "file_filter": "all",
+    "mode": "upload",
+    "file_filter": "jpg",
     "flask_host": "0.0.0.0",
     "flask_port": 5000
 }

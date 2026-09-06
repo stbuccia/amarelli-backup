@@ -5,7 +5,7 @@ set -Eeuo pipefail
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 VENV_DIR="$PROJECT_DIR/.venv"
 BOOT_CONFIG=""
-SPI_OVERLAY='dtoverlay=anyspi,spi0-1,dev=mmc-spi-slot,speed=20000000'
+SPI_OVERLAY='dtoverlay=anyspi,spi0-1,dev=mmc-spi-slot,speed=10000000'
 
 fail() {
     printf 'Error: %s\n' "$*" >&2
@@ -25,6 +25,15 @@ configure_boot() {
         printf 'Added %s to %s\n' "$line" "$BOOT_CONFIG"
     else
         printf 'Already configured: %s\n' "$line"
+    fi
+}
+
+configure_spi_overlay() {
+    if sudo grep -q '^dtoverlay=anyspi,spi0-1,dev=mmc-spi-slot' "$BOOT_CONFIG"; then
+        sudo sed -i "s|^dtoverlay=anyspi,spi0-1,dev=mmc-spi-slot.*|$SPI_OVERLAY|" "$BOOT_CONFIG"
+        printf 'Configured SD-card SPI overlay: %s\n' "$SPI_OVERLAY"
+    else
+        configure_boot "$SPI_OVERLAY"
     fi
 }
 
@@ -59,7 +68,18 @@ sudo apt-get install -y \
 printf 'Configuring SPI at boot...\n'
 configure_boot 'dtparam=spi=on'
 # The e-ink display uses SPI0 CE0; the SD-card reader is exposed on SPI0 CE1.
-configure_boot "$SPI_OVERLAY"
+configure_spi_overlay
+
+printf 'Preparing SD card mount point...\n'
+sudo mkdir -p /mnt/amarelli-sd
+sudo chown "$USER":"$USER" /mnt/amarelli-sd
+
+printf 'Preparing persistent application data directory...\n'
+mkdir -p "$HOME/amarelli/cache"
+if [[ -f $PROJECT_DIR/files.db && ! -f $HOME/amarelli/files.db ]]; then
+    cp "$PROJECT_DIR/files.db" "$HOME/amarelli/files.db"
+    printf 'Migrated existing database to %s\n' "$HOME/amarelli/files.db"
+fi
 
 printf 'Installing Python dependencies in %s...\n' "$VENV_DIR"
 if [[ ! -d $VENV_DIR ]]; then
@@ -77,9 +97,18 @@ if [[ ! -d $PROJECT_DIR/software/waveshare_epd ]]; then
         "$PROJECT_DIR/software/"
 fi
 
+# GPIO 17 is reserved by this project; the display reset line is BCM 27.
+sed -i '0,/RST_PIN  = 17/s//RST_PIN  = 27/' \
+    "$PROJECT_DIR/software/waveshare_epd/epdconfig.py"
+
+printf 'Installing Waveshare e-paper library in the virtual environment...\n'
+site_packages=$("$VENV_DIR/bin/python" -c 'import site; print(site.getsitepackages()[0])')
+rm -rf "$site_packages/waveshare_epd"
+cp -a "$PROJECT_DIR/software/waveshare_epd" "$site_packages/"
+
 if command -v dtoverlay >/dev/null 2>&1; then
     printf 'Applying the SD-card SPI overlay for this session...\n'
-    if ! sudo dtoverlay anyspi spi0-1 dev=mmc-spi-slot speed=20000000; then
+    if ! sudo dtoverlay anyspi spi0-1 dev=mmc-spi-slot speed=10000000; then
         printf 'The overlay was saved for the next reboot but could not be applied now. Reboot the Raspberry Pi.\n' >&2
     fi
 else
@@ -103,6 +132,7 @@ if [[ ! -f /etc/udev/rules.d/99-gpio.rules ]]; then
 fi
 
 printf '\nInstallation complete. Reboot the Raspberry Pi to activate SPI and the SD-card reader.\n'
+printf 'Run the application with: .venv/bin/python software/main.py\n'
 printf 'Note: LED strip (rpi_ws281x on GPIO18/Pin12) needs /dev/mem access.\n'
 printf '  - After first install: reboot or logout/login to apply gpio group.\n'
 printf '  - Test LEDs with: sudo .venv/bin/python software/tests/hardware/test_led.py\n'

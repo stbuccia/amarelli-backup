@@ -60,7 +60,7 @@ if args.mock:
         def sleep(self):
             pass
 else:
-    from waveshare_epd import epd2in13_V4
+    from waveshare_epd import epd2in13_V4, epdconfig
 
     EPD = epd2in13_V4.EPD
 
@@ -82,6 +82,7 @@ from eventbus import bus
 from config import Config
 from database import Database
 from cache import Cache
+from sdcard import SdCard
 from webdav_uploader import WebDav
 from log import setup_logger
 from backup import Backup, State
@@ -103,22 +104,23 @@ def get_ip_address() -> str:
 def run_interactive(epd):
     font = load_font(14)
     snapshot_path = str(ASSETS_DIR / "display_output.png") if args.imagick else None
-    display = Display(epd, font, snapshot_path=snapshot_path)
+    spi_lock = threading.Lock()
+    display = Display(epd, font, snapshot_path=snapshot_path, io_lock=spi_lock)
     display.init()
 
     config = Config(bus=bus)
     setup_logger(config)
 
-    db = Database()
+    db = Database(Path(config.db_path))
     cache_obj = None
     webdav = None
     try:
-        cache_obj = Cache(config, db, bus)
         webdav = WebDav(config, db, bus)
     except Exception as e:
-        logger.warning("Cache/WebDav init skipped: %s", e)
+        logger.warning("WebDav init skipped: %s", e)
 
     wf = Backup(cache_obj, webdav, db, bus, mode=getattr(config, 'mode', 'upload'))
+    sd_card = SdCard(config.sd_src)
 
     sb = StatusBar()
     legend = Legend()
@@ -127,27 +129,53 @@ def run_interactive(epd):
     status_view = BackupStatusView(db, bus=bus)
     status_view.refresh()
 
+    sd_available = None
+
+    def sync_sd_card():
+        nonlocal cache_obj, sd_available
+        available = sd_card.refresh()
+        if available and cache_obj is None:
+            try:
+                cache_obj = Cache(config, db, bus, io_lock=spi_lock)
+                wf.set_cache(cache_obj)
+            except Exception as error:
+                logger.warning("SD card is mounted but cannot be read: %s", error)
+                available = False
+        elif not available and cache_obj is not None:
+            cache_obj = None
+            wf.set_cache(None)
+
+        if available != sd_available:
+            sd_available = available
+            logger.info("SD card %s", "available" if available else "not available")
+            bus.emit("sd:changed", available=available)
+
+    sync_sd_card()
+
     keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(13, 6, 5, 19))
 
-    _loop(
-        display,
-        menu,
-        menu_view,
-        status_view,
-        sb,
-        legend,
-        keys,
-        backup=wf,
-        bus=bus,
-        config=config,
-        db=db,
-        mock=args.mock,
-        imagick=args.imagick,
-    )
-
-    keys.cleanup()
-    display.init_full()
-    display.sleep()
+    try:
+        _loop(
+            display,
+            menu,
+            menu_view,
+            status_view,
+            sb,
+            legend,
+            keys,
+            backup=wf,
+            bus=bus,
+            config=config,
+            db=db,
+            mock=args.mock,
+            imagick=args.imagick,
+            sync_sd_card=sync_sd_card,
+        )
+    finally:
+        sd_card.close()
+        keys.cleanup()
+        display.init_full()
+        display.sleep()
 
 
 def _handle_mock_keys(ch, sb, display, current_view, legend):
@@ -177,10 +205,12 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
 
 
 def _loop(
-    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False, imagick=False
+    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False, imagick=False,
+    sync_sd_card=None,
 ):
     redraw_pending = False
     last_refresh = 0.0
+    last_sd_check = 0.0
 
     def request_redraw():
         nonlocal redraw_pending
@@ -315,6 +345,11 @@ def _loop(
         print("          b B battery  i wifi  t title  (mock)")
 
     while True:
+        now = time.monotonic()
+        if sync_sd_card is not None and now - last_sd_check >= 0.25:
+            sync_sd_card()
+            last_sd_check = now
+
         if redraw_pending:
             redraw_pending = False
             if mock:
@@ -347,6 +382,16 @@ def _loop(
 
 
 def main():
+    if not args.mock:
+        logger.info(
+            "EPD driver=%s config=%s pins: RST=%s DC=%s BUSY=%s CS=%s",
+            epd2in13_V4.__file__,
+            epdconfig.__file__,
+            epdconfig.RST_PIN,
+            epdconfig.DC_PIN,
+            epdconfig.BUSY_PIN,
+            epdconfig.CS_PIN,
+        )
     epd = EPD()
     run_interactive(epd)
 

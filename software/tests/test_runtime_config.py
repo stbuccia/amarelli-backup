@@ -12,7 +12,10 @@ from cache import Cache
 from config import Config
 from database import Database
 from eventbus import EventBus
+from exceptions import TransientError
 from menu import Menu
+from sdcard import SdCard
+from display import BackupStatusView
 from webdav_uploader import WebDav
 
 
@@ -159,6 +162,118 @@ class RuntimeConfigTests(unittest.TestCase):
         uploader._ensure_directory("backup/2026/08")
 
         self.assertEqual(uploader.client.created, ["backup", "backup/2026", "backup/2026/08"])
+
+    def test_sd_card_detects_external_mmc_partition(self):
+        class FakeResult:
+            stdout = json.dumps({
+                "blockdevices": [
+                    {"path": "/dev/mmcblk0", "type": "disk"},
+                    {"path": "/dev/mmcblk0p2", "type": "part"},
+                    {"path": "/dev/mmcblk2", "type": "disk"},
+                    {"path": "/dev/mmcblk2p1", "type": "part"},
+                ]
+            })
+
+        from unittest.mock import patch
+
+        with patch("sdcard.subprocess.run", return_value=FakeResult()):
+            self.assertEqual(SdCard._find_device(), "/dev/mmcblk2p1")
+
+    def test_sd_card_waits_for_device_node(self):
+        from unittest.mock import patch
+
+        with patch("sdcard.subprocess.run"), patch(
+            "sdcard.Path.exists", side_effect=[False, True]
+        ), patch("sdcard.time.sleep"):
+            SdCard._wait_for_device("/dev/mmcblk2p1")
+
+    def test_cache_raises_when_sd_directory_cannot_be_read(self):
+        class FakeConfig:
+            file_filter = "all"
+            prune_min_days = 30
+
+        cfg = FakeConfig()
+        cfg.sd_src = Path(self.tmpdir.name) / "sd"
+        cfg.cache_path = Path(self.tmpdir.name) / "cache"
+        cfg.sd_src.mkdir()
+        cache = Cache(cfg, db=None)
+
+        from unittest.mock import patch
+
+        with patch("cache.os.walk", side_effect=OSError("card removed")):
+            with self.assertRaises(TransientError):
+                cache.copy()
+
+    def test_cache_reports_current_file(self):
+        class FakeDatabase:
+            def find_by_sd_path(self, path):
+                return None
+
+            def create(self, *args):
+                return object()
+
+        class FakeConfig:
+            file_filter = "all"
+            prune_min_days = 30
+
+        source_dir = Path(self.tmpdir.name) / "sd"
+        cache_dir = Path(self.tmpdir.name) / "cache"
+        source_dir.mkdir()
+        (source_dir / "photo.jpg").write_bytes(b"photo")
+        cfg = FakeConfig()
+        cfg.sd_src = source_dir
+        cfg.cache_path = cache_dir
+        events = []
+        bus = EventBus()
+        bus.on("cache:file", lambda **event: events.append(event))
+
+        Cache(cfg, FakeDatabase(), bus).copy()
+
+        self.assertEqual(events[0]["path"], str(source_dir / "photo.jpg"))
+        self.assertEqual(events[0]["processed"], 1)
+
+    def test_cached_file_with_matching_metadata_is_not_hashed(self):
+        from models import FileRecord
+        from unittest.mock import patch
+
+        class FakeDatabase:
+            def __init__(self, record):
+                self.record = record
+
+            def find_by_sd_path(self, path):
+                return self.record
+
+        class FakeConfig:
+            file_filter = "all"
+            prune_min_days = 30
+
+        source_dir = Path(self.tmpdir.name) / "sd"
+        cache_dir = Path(self.tmpdir.name) / "cache"
+        source_dir.mkdir()
+        cache_dir.mkdir()
+        source = source_dir / "photo.jpg"
+        cached = cache_dir / "photo.jpg"
+        source.write_bytes(b"photo")
+        cached.write_bytes(b"photo")
+        stat = source.stat()
+        record = FileRecord(1, "hash", str(source), str(cached), 5, stat.st_size, stat.st_mtime)
+        cfg = FakeConfig()
+        cfg.sd_src = source_dir
+        cfg.cache_path = cache_dir
+
+        with patch("cache.xx_hash64") as hash_file:
+            Cache(cfg, FakeDatabase(record)).copy()
+
+        hash_file.assert_not_called()
+
+    def test_status_view_shows_current_cache_file(self):
+        view = BackupStatusView(bus=self.bus)
+        view.progress_total = 3
+
+        self.bus.emit("cache:file", path="/mnt/amarelli-sd/DCIM/photo.jpg", processed=1)
+
+        self.assertEqual(view.current_file, "photo.jpg")
+        self.assertEqual(view.progress_current, 1)
 
 
 if __name__ == "__main__":

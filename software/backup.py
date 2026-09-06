@@ -58,6 +58,8 @@ class Backup:
     def start(self) -> bool:
         if self._state != State.IDLE:
             return False
+        if self._cache is None and self._db.count_pending_uploads() == 0:
+            return False
         self._mode = self._next_mode
         if self._cache:
             self._cache.prepare_backup()
@@ -65,6 +67,9 @@ class Backup:
         self._set_state(State.CACHING, reset=True)
         threading.Thread(target=self._run, daemon=True).start()
         return True
+
+    def set_cache(self, cache) -> None:
+        self._cache = cache
 
     def _on_config_set(self, key, value, **kw):
         if key == "mode":

@@ -1,5 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
+from queue import SimpleQueue
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class GpioKeyListener(KeyListener):
     DOWN = 1
     LEFT = 2
     RIGHT = 3
+    BOUNCE_TIME_MS = 50
 
     def __init__(self, pins=(None, None, None, None)):
         self._pins = {
@@ -68,21 +70,27 @@ class GpioKeyListener(KeyListener):
             self.LEFT: "LEFT",
             self.RIGHT: "RIGHT",
         }
-        self._last_key = None
+        self._events = SimpleQueue()
+        self._buttons = []
         self._available = False
         self._setup()
 
     def _setup(self):
         try:
-            import RPi.GPIO as GPIO
+            from gpiozero import Button
 
-            GPIO.setmode(GPIO.BCM)
-            for pin in self._pins.values():
+            for idx, pin in self._pins.items():
                 if pin is not None:
-                    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                    button = Button(
+                        pin, pull_up=True, bounce_time=self.BOUNCE_TIME_MS / 1000
+                    )
+                    button.when_pressed = (
+                        lambda _button, key=idx: self._events.put(key)
+                    )
+                    self._buttons.append(button)
             self._available = True
         except ImportError:
-            logger.warning("RPi.GPIO not available, GpioKeyListener is a stub")
+            logger.warning("gpiozero not available, GpioKeyListener is a stub")
         except Exception as e:
             logger.warning("GPIO setup failed: %s", e)
 
@@ -90,24 +98,11 @@ class GpioKeyListener(KeyListener):
         if not self._available:
             return None
 
-        import RPi.GPIO as GPIO
-
-        for idx, pin in self._pins.items():
-            if pin is None:
-                continue
-            if GPIO.input(pin) == GPIO.LOW:
-                if self._last_key != idx:
-                    self._last_key = idx
-                    return self._key_map[idx]
-            elif self._last_key == idx:
-                self._last_key = None
-        return None
+        try:
+            return self._key_map[self._events.get_nowait()]
+        except Exception:
+            return None
 
     def cleanup(self):
-        if self._available:
-            try:
-                import RPi.GPIO as GPIO
-
-                GPIO.cleanup()
-            except Exception:
-                pass
+        for button in self._buttons:
+            button.close()

@@ -2,6 +2,7 @@ import sys
 import os
 import logging
 from PIL import Image, ImageDraw, ImageFont
+from contextlib import nullcontext
 
 from backup import State
 
@@ -164,6 +165,7 @@ class BackupStatusView:
         self.uploaded_count = 0
         self.progress_total = 0
         self.progress_current = 0
+        self.current_file = ""
         self._wifi = True
         self._bus = bus
         if bus:
@@ -172,6 +174,8 @@ class BackupStatusView:
             bus.on("file:uploaded", self._on_file_uploaded)
             bus.on("file:pruned", self._on_file_pruned)
             bus.on("file:remote_deleted", self._on_remote_deleted)
+            bus.on("cache:file", self._on_cache_file)
+            bus.on("sd:changed", self._on_sd_changed)
 
     def refresh(self):
         try:
@@ -233,6 +237,11 @@ class BackupStatusView:
         self.inc_progress()
         self._bus.emit("ui:redraw")
 
+    def _on_cache_file(self, path, processed=0, **kw):
+        self.current_file = path.rsplit("/", 1)[-1]
+        self.progress_current = min(processed, self.progress_total)
+        self._bus.emit("ui:redraw")
+
     def _on_file_uploaded(self, file=None, **kw):
         self.pending_upload -= 1
         self.uploaded_count += 1
@@ -248,6 +257,13 @@ class BackupStatusView:
         self.uploaded_count = max(0, self.uploaded_count - 1)
         self.cached_count = max(0, self.cached_count - 1)
         self.inc_progress()
+        self._bus.emit("ui:redraw")
+
+    def _on_sd_changed(self, available, **kw):
+        if available or self.pending_upload > 0:
+            self.status = "Ready"
+        else:
+            self.status = "Waiting for SD card"
         self._bus.emit("ui:redraw")
 
     def render(self, draw, font, width, height, y_offset=0, bottom_margin=0):
@@ -274,11 +290,15 @@ class BackupStatusView:
             draw.rectangle(
                 [(x, bar_y), (x + bar_w, bar_y + bar_h)], fill=255, outline=0
             )
-            if fill > 0:
+            if fill > 1:
                 draw.rectangle(
                     [(x + 1, bar_y + 1), (x + fill - 1, bar_y + bar_h - 1)], fill=0
                 )
             y += bar_h + self.LINE_SPACING
+
+        if self.status == "Caching files..." and self.current_file:
+            draw.text((x, y), self.current_file[:30], font=font, fill=0)
+            return
 
         draw.text((x, y), f"Cached: {self.cached_count} files", font=font, fill=0)
         y += line_h
@@ -357,25 +377,31 @@ class Display:
     WIDTH = 250
     HEIGHT = 122
 
-    def __init__(self, epd, font, snapshot_path=None):
+    def __init__(self, epd, font, snapshot_path=None, io_lock=None):
         self._epd = epd
         self._font = font
         self._initialized = False
         self.snapshot_path = snapshot_path
+        self._io_lock = io_lock
 
     @property
     def font(self):
         return self._font
 
     def init(self):
-        pass
+        # Match the Waveshare V4 startup sequence before the first frame.
+        with self._io_lock or nullcontext():
+            self._epd.init()
+            self._epd.Clear(0xFF)
 
     def init_full(self):
-        self._epd.init()
-        self._epd.Clear(0xFF)
+        with self._io_lock or nullcontext():
+            self._epd.init()
+            self._epd.Clear(0xFF)
 
     def sleep(self):
-        self._epd.sleep()
+        with self._io_lock or nullcontext():
+            self._epd.sleep()
 
     def _compose(self, content_view, status_bar, legend):
         img = Image.new("1", (self.WIDTH, self.HEIGHT), 255)
@@ -396,13 +422,14 @@ class Display:
         img = self._compose(content_view, status_bar, legend)
         if self.snapshot_path:
             img.save(self.snapshot_path)
-        if not self._initialized:
-            self._epd.init()
-            self._epd.display(self._epd.getbuffer(img))
-            self._initialized = True
-        else:
-            self._epd.init_fast()
-            self._epd.display_fast(self._epd.getbuffer(img))
+        with self._io_lock or nullcontext():
+            if not self._initialized:
+                self._epd.init()
+                self._epd.display(self._epd.getbuffer(img))
+                self._initialized = True
+            else:
+                self._epd.init_fast()
+                self._epd.display_fast(self._epd.getbuffer(img))
 
 
 def setup_ui_handlers(

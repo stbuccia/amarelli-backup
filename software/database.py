@@ -28,9 +28,10 @@ CREATE TABLE IF NOT EXISTS files (
 
 class Database:
     def __init__(self, db_path: Path = Path("files.db")):
-        self.db_path = db_path
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(
-            str(db_path), autocommit=True, check_same_thread=False
+            str(db_path), isolation_level=None, check_same_thread=False
         )
         self._create_schema()
 

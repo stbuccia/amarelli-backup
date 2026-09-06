@@ -1,0 +1,13 @@
+Gestire lo stop del caching
+Gestire file che vengono copiati, ma non uploadati
+Non viene ben intercettata la fine del caching -> Devo togliere la sd 
+Quando finisce il caching lo schermo impazzisce
+Altri servizi con rclone
+Se si interrompe la foto rimane a metà
+Daemon 
+Cambiare legenda
+LED
+Reed Switch
+Oltre la barra sarebbe bello mettere anche numero file / numero file totale
+Barra che si aggiorna con un partial refresh 
+    

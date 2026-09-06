@@ -11,7 +11,7 @@
 + CLK 	SCLK 	Pin 23
 + CS 	CE0 	Pin 24
 + DC 	25 	Pin 22
-+ RST 	17 	Pin 11
++ RST 	27 	Pin 13
 + BUSY 	24 	Pin 18 
 
 # TPS

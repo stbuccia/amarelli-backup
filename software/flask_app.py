@@ -30,6 +30,24 @@ def _signal_bars(pct: int) -> str:
     return "\u2582"
 
 
+def _get_rclone_remotes() -> list[str]:
+    """Ritorna i remoti configurati in rclone (es. ['dropbox:', 'gdrive:'])."""
+    try:
+        # Prova a rispettare RCLONE_CONFIG_FILE dal .env/config se presente
+        cfg_path = os.getenv("RCLONE_CONFIG_FILE", "")
+        cmd = ["rclone", "listremotes"]
+        if cfg_path:
+            cmd = ["rclone", "--config", cfg_path, "listremotes"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
+    return []
+
+
 def _h(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
@@ -355,6 +373,26 @@ function addNetwork() {{
         mode_sel = _select("mode", _val("mode"), {"upload": "Upload only", "mirror": "Mirroring"})
         filter_sel = _select("file_filter", _val("file_filter"), {"all": "All files", "images": "Photos only (JPG+RAW)", "jpg": "JPG only"})
         prune_sel = _select("prune_min_days", prune_display, {"immediate": "Delete now", "7": "After 7 days", "30": "After 30 days", "keep": "Keep forever"})
+        op_mode_sel = _select("operation_mode", _val("operation_mode") or "manual", {"manual": "Manual (step-by-step)", "auto": "Automatic (LED headless)"})
+
+        # --- rclone remotes ---
+        remotes = _get_rclone_remotes()
+        current_remote = _val("rclone_remote")
+        # Assicura che il valore attuale sia tra le opzioni anche se non più listato
+        datalist_opts = ""
+        seen = set(remotes)
+        if current_remote and current_remote not in seen:
+            seen.add(current_remote)
+            remotes = [current_remote] + remotes
+        for r in remotes:
+            datalist_opts += f'<option value="{_h(r)}">'
+        rclone_hint = ""
+        if not remotes:
+            rclone_hint = '<div class="text-muted" style="padding:4px 0 0">Nessun remoto trovato: esegui <code>rclone config</code> sulla Raspberry.</div>'
+        else:
+            rclone_hint = '<div class="text-muted" style="padding:4px 0 0">Scegli un remoto rclone o inserisci un percorso locale (es. <code>/mnt/usb/backup</code>).</div>'
+
+        uploader_sel = _select("uploader", _val("uploader") or "rclone", {"rclone": "rclone (Dropbox, Drive, S3, ...)", "webdav": "WebDAV"})
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -390,6 +428,18 @@ select:focus {{ border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }}
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Mode</div>{mode_sel}</div>
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">File filter</div>{filter_sel}</div>
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Prune policy</div>{prune_sel}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Operation</div>{op_mode_sel}</div>
+</div>
+
+<div class="card">
+<div class="card-title">Destinazione backup</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Backend</div>{uploader_sel}</div>
+<div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Remoto rclone</div>
+<input list="rclone-remotes" name="rclone_remote" value="{_h(current_remote)}" placeholder="es. dropbox:amarelli-test  o  /mnt/usb/backup" style="width:100%;padding:10px 12px;border:1px solid #ccd0d5;border-radius:6px;font-size:.95em;outline:none">
+<datalist id="rclone-remotes">{datalist_opts}</datalist>
+{rclone_hint}
+</div>
+<div class="text-muted" style="padding:0 16px 12px">Se <b>WebDAV</b> è selezionato, configura <code>WEBDAV_*</code> nel file <code>.env</code>. Per <b>rclone</b> usa <code>rclone config</code> (vedi README).</div>
 </div>
 
 <div class="card">
@@ -418,7 +468,7 @@ if (err) msg.innerHTML = '<div class="flash flash-error">' + err + '</div>';
             return _redirect_with("?err=No+config+manager")
         for key in request.form:
             value = request.form[key]
-            if key == "mode" or key == "file_filter":
+            if key in ("mode", "file_filter", "operation_mode"):
                 bus.emit("config:set", key=key, value=value)
             elif key == "prune_min_days":
                 if value == "keep":

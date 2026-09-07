@@ -43,6 +43,8 @@ class Cache:
         self._bus = bus or EventBus()
         self._io_lock = io_lock
         self._last_seen_paths: set[str] = set()
+        self.last_copy_stats = {"ok": 0, "failed": 0, "total": 0}
+        self.last_prune_stats = {"ok": 0, "failed": 0}
 
     @property
     def last_seen_paths(self) -> set[str]:
@@ -101,6 +103,7 @@ class Cache:
     def copy(self):
         self._last_seen_paths = set()
         failures = []
+        ok = 0
         processed = 0
         try:
             for root, _, filenames in self._walk():
@@ -147,14 +150,17 @@ class Cache:
                             )
                             logger.info("Re-cached: %s", src)
                         self._bus.emit("file:cached", file=record)
+                        ok += 1
                     except OSError as error:
                         if partial is not None:
                             partial.unlink(missing_ok=True)
                         logger.error("Error copying %s: %s", src, error)
                         failures.append(f"{src}: {error}")
         except OSError as error:
+            self.last_copy_stats = {"ok": ok, "failed": len(failures), "total": processed}
             raise TransientError(f"Cannot read SD card: {error}") from error
 
+        self.last_copy_stats = {"ok": ok, "failed": len(failures), "total": processed}
         if failures:
             raise TransientError(
                 f"Failed to cache {len(failures)} file(s): {'; '.join(failures)}"
@@ -163,6 +169,7 @@ class Cache:
     def prune(self):
         if self._prune_min_days is None:
             logger.info("Cache pruning is disabled")
+            self.last_prune_stats = {"ok": 0, "failed": 0}
             return
         min_date = (
             time.time() - self._prune_min_days * 86400
@@ -172,8 +179,10 @@ class Cache:
         try:
             uploaded = self.db.find_uploaded_not_pruned(min_date)
         except Exception as error:
+            self.last_prune_stats = {"ok": 0, "failed": 0}
             raise TransientError(f"Database error during prune: {error}") from error
         failures = []
+        ok = 0
         for record in uploaded:
             try:
                 path = Path(record.cache_path)
@@ -182,9 +191,11 @@ class Cache:
                     logger.info("Deleted: %s", path)
                 self.db.mark_pruned(record.id)
                 self._bus.emit("file:pruned", file=record)
+                ok += 1
             except OSError as error:
                 logger.error("Error pruning %s: %s", record.id, error)
                 failures.append(f"{record.id}: {error}")
+        self.last_prune_stats = {"ok": ok, "failed": len(failures)}
         if failures:
             raise TransientError(
                 f"Failed to prune {len(failures)} file(s): {'; '.join(failures)}"

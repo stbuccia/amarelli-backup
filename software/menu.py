@@ -67,6 +67,14 @@ MENU_TREE = [
             MenuItem("JPG only",                value="jpg"),
         ],
     ),
+    MenuItem(
+        "Operation",
+        config_key="operation_mode",
+        children=[
+            MenuItem("Manual",            value="manual"),
+            MenuItem("Automatic (LED)",   value="auto"),
+        ],
+    ),
 ]
 
 

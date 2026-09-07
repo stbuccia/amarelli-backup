@@ -63,7 +63,8 @@ sudo apt-get install -y \
     python3-venv \
     libjpeg-dev \
     libfreetype6-dev \
-    zlib1g-dev
+    zlib1g-dev \
+    rclone
 
 printf 'Configuring SPI at boot...\n'
 configure_boot 'dtparam=spi=on'

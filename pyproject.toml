@@ -26,7 +26,7 @@ raspberry-pi = [
 
 [tool.setuptools]
 package-dir = {"" = "software"}
-py-modules = ["backup", "cache", "config", "database", "display", "eventbus", "exceptions", "flask_app", "keylistener", "log", "main", "menu", "models", "sdcard", "webdav_uploader", "wifi"]
+py-modules = ["backup", "cache", "config", "database", "display", "eventbus", "exceptions", "flask_app", "keylistener", "log", "main", "menu", "models", "rclone_uploader", "sdcard", "uploader", "webdav_uploader", "wifi"]
 
 [project.scripts]
 amarelli = "main:main"

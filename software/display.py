@@ -132,7 +132,7 @@ class StatusBar:
 class Legend:
     HEIGHT = 14
 
-    def __init__(self, text="\u25b2/\u25bc nav  \u25b6 enter  \u25c0 back  Q quit"):
+    def __init__(self, text="\u25c0 back  \u25bc/\u25b2 nav  \u25b6 enter"):
         self._text = text
 
     def set_text(self, text: str):
@@ -167,6 +167,9 @@ class BackupStatusView:
         self.progress_current = 0
         self.current_file = ""
         self._wifi = True
+        self._sd_available = None
+        self._stats = None  # last run stats: {cached_ok, cached_failed, uploaded_ok, uploaded_failed, remote_deleted, pruned, up_to_date}
+        self._error_msg = ""
         self._bus = bus
         if bus:
             bus.on("backup:state", self._on_backup_state)
@@ -195,37 +198,51 @@ class BackupStatusView:
             self.progress_current += 1
 
     def _on_backup_state(self, state, total=0, reset=False, **kw):
-        self.status = {
-            State.CACHING: "Caching files...",
-            State.UPLOADING: "Uploading...",
-            State.REMOTE_CLEANUP: "Cleaning remote...",
-            State.PRUNING: "Pruning cache...",
-            State.COMPLETED: "Done",
-            State.PAUSED: "Paused",
-            State.RETRYING: "Retrying...",
-            State.ERROR: "Error",
-            State.IDLE: "Ready",
-        }.get(state, "")
+        stats = kw.get("stats")
+        error = kw.get("error", "")
+        up_to_date = kw.get("up_to_date", False)
+        if state == State.COMPLETED and up_to_date:
+            self.status = "Already up to date"
+        else:
+            self.status = {
+                State.CACHING: "Caching files...",
+                State.UPLOADING: "Uploading...",
+                State.REMOTE_CLEANUP: "Cleaning remote...",
+                State.PRUNING: "Pruning cache...",
+                State.COMPLETED: "Done",
+                State.PAUSED: "Paused",
+                State.RETRYING: "Retrying...",
+                State.ERROR: "Error",
+                State.IDLE: "Ready",
+            }.get(state, "")
         if reset:
             self.cached_count = 0
             self.pending_upload = 0
             self.uploaded_count = 0
             self.progress_total = 0
             self.progress_current = 0
+            self._stats = None
+            self._error_msg = ""
         if state in (State.IDLE, State.COMPLETED, State.PAUSED, State.ERROR):
             self.refresh()
+        if state in (State.COMPLETED, State.ERROR) and stats is not None:
+            self._stats = stats
+            self._error_msg = error
+        elif state == State.IDLE:
+            self._stats = None
+            self._error_msg = ""
         if total:
             self.set_phase(total)
         legend_text = {
-            State.IDLE: "\u25b6 backup  \u25c0 menu  Q quit",
-            State.CACHING: "\u25c0 pause  Q quit",
-            State.UPLOADING: "\u25c0 pause  Q quit",
-            State.REMOTE_CLEANUP: "\u25c0 pause  Q quit",
-            State.PRUNING: "\u25c0 pause  Q quit",
-            State.PAUSED: "\u25b6 resume  \u25c0 stop  Q quit",
-            State.RETRYING: "\u25c0 pause  Q quit",
-            State.COMPLETED: "\u25b6 backup  \u25c0 menu  Q quit",
-            State.ERROR: "\u25b6 backup  \u25c0 menu  Q quit",
+            State.IDLE: "\u25c0 menu  \u25b6 backup",
+            State.CACHING: "\u25c0 pause",
+            State.UPLOADING: "\u25c0 pause",
+            State.REMOTE_CLEANUP: "\u25c0 pause",
+            State.PRUNING: "\u25c0 pause",
+            State.PAUSED: "\u25c0 stop  \u25b6 resume",
+            State.RETRYING: "\u25c0 pause",
+            State.COMPLETED: "\u25c0 menu  \u25b6 backup",
+            State.ERROR: "\u25c0 menu  \u25b6 backup",
         }.get(state, "")
         if legend_text:
             self._bus.emit("ui:legend-update", text=legend_text)
@@ -260,10 +277,7 @@ class BackupStatusView:
         self._bus.emit("ui:redraw")
 
     def _on_sd_changed(self, available, **kw):
-        if available or self.pending_upload > 0:
-            self.status = "Ready"
-        else:
-            self.status = "Waiting for SD card"
+        self._sd_available = bool(available)
         self._bus.emit("ui:redraw")
 
     def render(self, draw, font, width, height, y_offset=0, bottom_margin=0):
@@ -278,6 +292,15 @@ class BackupStatusView:
 
         wifi_label = "Connected" if self._wifi else "Disconnected"
         draw.text((x, y), f"WiFi: {wifi_label}", font=font, fill=0)
+        y += line_h
+
+        if self._sd_available is None:
+            sd_label = "--"
+        elif self._sd_available:
+            sd_label = "Available"
+        else:
+            sd_label = "No SD"
+        draw.text((x, y), f"SD: {sd_label}", font=font, fill=0)
         y += line_h
 
         if self.progress_total > 0:
@@ -300,10 +323,57 @@ class BackupStatusView:
             draw.text((x, y), self.current_file[:30], font=font, fill=0)
             return
 
+        # COMPLETED / ERROR / Already up to date -> show stats of last run
+        if self.status in ("Done", "Error", "Already up to date") and self._stats is not None:
+            s = self._stats
+            if self.status == "Already up to date":
+                draw.text((x, y), "No new files", font=font, fill=0)
+                y += line_h
+                if s.get("cached_ok", 0) or s.get("uploaded_ok", 0):
+                    draw.text((x, y), f"Cached: {s.get('cached_ok',0)}  Up: {s.get('uploaded_ok',0)}", font=font, fill=0)
+                    y += line_h
+                if y + line_h <= height - bottom_margin - 2:
+                    draw.text((x, y), f"SD: {sd_label}  WiFi: {wifi_label}", font=font, fill=0)
+                return
+            if self.status == "Done":
+                draw.text((x, y), f"Cached: {s.get('cached_ok', self.cached_count)}", font=font, fill=0)
+                y += line_h
+                if y + line_h > height - bottom_margin - 2:
+                    return
+                draw.text((x, y), f"Uploaded: {s.get('uploaded_ok', self.uploaded_count)}", font=font, fill=0)
+                y += line_h
+                if s.get("remote_deleted", 0) and y + line_h <= height - bottom_margin - 2:
+                    draw.text((x, y), f"Removed: {s.get('remote_deleted',0)}", font=font, fill=0)
+                    y += line_h
+                if s.get("pruned", 0) and y + line_h <= height - bottom_margin - 2:
+                    draw.text((x, y), f"Pruned: {s.get('pruned',0)}", font=font, fill=0)
+                return
+            if self.status == "Error":
+                cf = s.get('cached_failed', 0)
+                co = s.get('cached_ok', 0)
+                uf = s.get('uploaded_failed', 0)
+                uo = s.get('uploaded_ok', 0)
+                draw.text((x, y), f"Cached: {co} ok {cf} err", font=font, fill=0)
+                y += line_h
+                if y + line_h > height - bottom_margin - 2:
+                    return
+                draw.text((x, y), f"Upload: {uo} ok {uf} err", font=font, fill=0)
+                y += line_h
+                if s.get("remote_deleted", 0) and y + line_h <= height - bottom_margin - 2:
+                    draw.text((x, y), f"Removed: {s.get('remote_deleted',0)}", font=font, fill=0)
+                    y += line_h
+                if y + line_h <= height - bottom_margin - 2 and self._error_msg:
+                    draw.text((x, y), self._error_msg[:30], font=font, fill=0)
+                return
+
         draw.text((x, y), f"Cached: {self.cached_count} files", font=font, fill=0)
         y += line_h
+        if y + line_h > height - bottom_margin - 2:
+            return
         draw.text((x, y), f"To upload: {self.pending_upload}", font=font, fill=0)
         y += line_h
+        if y + line_h > height - bottom_margin - 2:
+            return
         draw.text((x, y), f"Uploaded: {self.uploaded_count}", font=font, fill=0)
 
 
@@ -443,13 +513,13 @@ def setup_ui_handlers(
     def on_menu_opened(**kw):
         active_view[0] = menu_view
         status_bar.set_title(menu.breadcrumb_title)
-        legend.set_text("\u25b2/\u25bc nav  \u25b6 enter  \u25c0 back  Q quit")
+        legend.set_text("\u25c0 back  \u25bc/\u25b2 nav  \u25b6 enter")
         display.render_full(active_view[0], status_bar, legend)
 
     def on_menu_closed(**kw):
         active_view[0] = status_view
         status_bar.set_title("Amarelli")
-        legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
+        legend.set_text("\u25c0 menu  \u25b6 backup")
         status_view.refresh()
         display.render_full(active_view[0], status_bar, legend)
 

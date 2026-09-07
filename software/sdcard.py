@@ -10,18 +10,53 @@ logger = logging.getLogger(__name__)
 
 
 class SdCard:
-    def __init__(self, mount_path: str | Path):
+    def __init__(self, mount_path: str | Path, mock: bool = False):
         self.mount_path = Path(mount_path)
         self._device = None
+        self._mock = bool(mock)
 
-    def refresh(self) -> bool:
+    def _refresh_mock(self) -> bool:
+        if not self.mount_path.is_dir():
+            self._device = None
+            return False
+        try:
+            next(self.mount_path.iterdir(), None)
+        except OSError as error:
+            logger.warning("Mock SD %s is not readable: %s", self.mount_path, error)
+            self._device = None
+            return False
+        self._device = "mock"
+        return True
+
+    def is_available(self) -> bool:
+        """Lightweight detect: non monta, verifica solo presenza/leggibilità."""
+        if self._mock:
+            return self._refresh_mock()
+        device = self._find_device()
+        if device is None or not Path(device).exists():
+            self._device = None
+            return False
+        if not os.path.ismount(self.mount_path):
+            self._device = None
+            return False
+        try:
+            next(self.mount_path.iterdir(), None)
+        except OSError:
+            self._device = None
+            return False
+        self._device = device
+        return True
+
+    def try_mount(self) -> bool:
+        """Tenta mount RO se necessario. Ritorna True se dopo la chiamata la SD è disponibile."""
+        if self._mock:
+            return self._refresh_mock()
         device = self._find_device()
         if device is None or not Path(device).exists():
             if os.path.ismount(self.mount_path):
                 subprocess.run(["sudo", "umount", str(self.mount_path)], check=False)
             self._device = None
             return False
-
         if not os.path.ismount(self.mount_path):
             try:
                 self._wait_for_device(device)
@@ -44,7 +79,6 @@ class SdCard:
             except OSError as error:
                 logger.warning("Cannot prepare SD mount point %s: %s", self.mount_path, error)
                 return False
-
         try:
             next(self.mount_path.iterdir(), None)
         except OSError as error:
@@ -52,11 +86,17 @@ class SdCard:
             subprocess.run(["sudo", "umount", str(self.mount_path)], check=False)
             self._device = None
             return False
-
         self._device = device
         return True
 
+    def refresh(self) -> bool:
+        # Compat: mantiene API storica (mount se necessario)
+        return self.try_mount()
+
     def close(self) -> None:
+        if self._mock:
+            self._device = None
+            return
         if os.path.ismount(self.mount_path):
             subprocess.run(["sudo", "umount", str(self.mount_path)], check=False)
         self._device = None

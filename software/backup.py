@@ -36,6 +36,7 @@ class Backup:
     def __init__(self, cache, uploader, db, bus=None, max_retries=3, retry_delay=5, mode="upload"):
         self._cache = cache
         self._uploader = uploader
+        self._next_uploader = None
         self._db = db
         self._bus = bus or EventBus()
         self._max_retries = max_retries
@@ -57,10 +58,16 @@ class Backup:
 
     def start(self) -> bool:
         if self._state != State.IDLE:
+            logger.info("Backup start ignored: state=%s", self._state.name)
             return False
-        if self._cache is None and self._db.count_pending_uploads() == 0:
+        pending = self._db.count_pending_uploads()
+        if self._cache is None and pending == 0:
+            logger.info("Backup start ignored: no cache and no pending uploads (pending=%s)", pending)
             return False
         self._mode = self._next_mode
+        if self._next_uploader is not None:
+            self._uploader = self._next_uploader
+            self._next_uploader = None
         if self._cache:
             self._cache.prepare_backup()
         self._cancel.clear()
@@ -70,6 +77,16 @@ class Backup:
 
     def set_cache(self, cache) -> None:
         self._cache = cache
+
+    def set_uploader(self, uploader) -> None:
+        """Sostituisce il backend di upload; se un backup e' in corso il
+        cambio viene applicato al backup successivo."""
+        if self.is_active or self._state in (State.PAUSED, State.RETRYING):
+            self._next_uploader = uploader
+            logger.info("Upload backend will change on the next backup")
+            return
+        self._uploader = uploader
+        self._next_uploader = None
 
     def _on_config_set(self, key, value, **kw):
         if key == "mode":
@@ -108,7 +125,7 @@ class Backup:
             old, self._state = self._state, state
             if state == State.PAUSED:
                 self._resume_state = old
-            logger.debug("Backup: %s -> %s", old.name, state.name)
+            logger.info("Backup: %s -> %s", old.name, state.name)
         self._bus.emit("backup:state", state=state, **kw)
 
     def _get_phase_total(self, state) -> int:
@@ -126,6 +143,14 @@ class Backup:
         return 0
 
     def _run(self):
+        stats = {
+            "cached_ok": 0,
+            "cached_failed": 0,
+            "uploaded_ok": 0,
+            "uploaded_failed": 0,
+            "remote_deleted": 0,
+            "pruned": 0,
+        }
         try:
             if self._state == State.PAUSED:
                 target = self._resume_state
@@ -155,9 +180,35 @@ class Backup:
 
                 for attempt in range(1, self._max_retries + 1):
                     try:
+                        logger.info("Starting phase %s (%s)", state.name, method_name)
                         getattr(obj, method_name)()
+                        logger.info("Completed phase %s", state.name)
+                        # collect stats on success
+                        if state == State.CACHING:
+                            s = getattr(obj, "last_copy_stats", {})
+                            stats["cached_ok"] = s.get("ok", 0)
+                            stats["cached_failed"] = s.get("failed", 0)
+                        elif state == State.UPLOADING:
+                            s = getattr(obj, "last_upload_stats", {})
+                            stats["uploaded_ok"] = s.get("ok", 0)
+                            stats["uploaded_failed"] = s.get("failed", 0)
+                        elif state == State.REMOTE_CLEANUP:
+                            s = getattr(obj, "last_cleanup_stats", {})
+                            stats["remote_deleted"] = s.get("ok", 0)
+                        elif state == State.PRUNING:
+                            s = getattr(obj, "last_prune_stats", {})
+                            stats["pruned"] = s.get("ok", 0)
                         break
                     except TransientError as e:
+                        # capture partial stats before retry
+                        if state == State.CACHING:
+                            s = getattr(obj, "last_copy_stats", {})
+                            stats["cached_ok"] = s.get("ok", 0)
+                            stats["cached_failed"] = s.get("failed", 0)
+                        elif state == State.UPLOADING:
+                            s = getattr(obj, "last_upload_stats", {})
+                            stats["uploaded_ok"] = s.get("ok", 0)
+                            stats["uploaded_failed"] = s.get("failed", 0)
                         if attempt < self._max_retries:
                             wait = self._retry_delay * (2 ** (attempt - 1))
                             logger.warning(
@@ -175,6 +226,10 @@ class Backup:
                         else:
                             raise
                     except PermanentError:
+                        if state == State.UPLOADING:
+                            s = getattr(obj, "last_upload_stats", {})
+                            stats["uploaded_ok"] = s.get("ok", 0)
+                            stats["uploaded_failed"] = s.get("failed", 0)
                         raise
 
                 if self._cancel.is_set():
@@ -206,14 +261,22 @@ class Backup:
                         self._bus.emit("config:set", key="cloud_dst", value=new_dst)
                         logger.info("Nuova destinazione remota: %s", new_dst)
 
-            self._set_state(State.COMPLETED)
+            up_to_date = (
+                stats["cached_ok"] == 0
+                and stats["uploaded_ok"] == 0
+                and stats["cached_failed"] == 0
+                and stats["uploaded_failed"] == 0
+                and stats["remote_deleted"] == 0
+                and stats["pruned"] == 0
+            )
+            self._set_state(State.COMPLETED, stats=stats, up_to_date=up_to_date)
 
         except (TransientError, PermanentError) as e:
             logger.error("Backup error: %s", e)
-            self._set_state(State.ERROR)
+            self._set_state(State.ERROR, stats=stats, error=str(e)[:60])
         except Exception as e:
             logger.exception("Unexpected backup error")
-            self._set_state(State.ERROR)
+            self._set_state(State.ERROR, stats=stats, error=str(e)[:60])
 
     def handle_key_event(self, key):
         if key in ("RIGHT", "d", "\r", "\n"):

@@ -83,7 +83,7 @@ from config import Config
 from database import Database
 from cache import Cache
 from sdcard import SdCard
-from webdav_uploader import WebDav
+from uploader import create_uploader
 from log import setup_logger
 from backup import Backup, State
 from wifi import WiFiManager
@@ -110,17 +110,42 @@ def run_interactive(epd):
 
     config = Config(bus=bus)
     setup_logger(config)
+    logger.info(
+        "Config: mock=%s sd_src=%s cache=%s db=%s log=%s uploader=%s remote=%s cloud_dst=%s mode=%s filter=%s",
+        args.mock,
+        config.sd_src,
+        config.cache_path,
+        config.db_path,
+        config.log_path,
+        getattr(config, "uploader", "?"),
+        getattr(config, "rclone_remote", ""),
+        getattr(config, "cloud_dst", ""),
+        getattr(config, "mode", ""),
+        getattr(config, "file_filter", ""),
+    )
 
     db = Database(Path(config.db_path))
     cache_obj = None
-    webdav = None
+    uploader = None
     try:
-        webdav = WebDav(config, db, bus)
+        uploader = create_uploader(config, db, bus)
+        logger.info("Upload backend: %s", uploader.name)
     except Exception as e:
-        logger.warning("WebDav init skipped: %s", e)
+        logger.warning("Uploader init skipped: %s", e)
 
-    wf = Backup(cache_obj, webdav, db, bus, mode=getattr(config, 'mode', 'upload'))
-    sd_card = SdCard(config.sd_src)
+    wf = Backup(cache_obj, uploader, db, bus, mode=getattr(config, 'mode', 'upload'))
+    sd_card = SdCard(config.sd_src, mock=args.mock)
+
+    def on_uploader_config_changed(key, value, **kw):
+        if key not in ("uploader", "rclone_remote"):
+            return
+        try:
+            wf.set_uploader(create_uploader(config, db, bus))
+            logger.info("Upload backend set to %s", getattr(config, "uploader", "webdav"))
+        except Exception as error:
+            logger.warning("Cannot switch upload backend: %s", error)
+
+    bus.on("config:set", on_uploader_config_changed)
 
     sb = StatusBar()
     legend = Legend()
@@ -133,11 +158,17 @@ def run_interactive(epd):
 
     def sync_sd_card():
         nonlocal cache_obj, sd_available
-        available = sd_card.refresh()
+        mode = getattr(config, "operation_mode", "manual")
+        if mode == "auto":
+            available = sd_card.try_mount()
+        else:
+            # manual: lightweight detect only, no sudo mount
+            available = sd_card.is_available()
         if available and cache_obj is None:
             try:
                 cache_obj = Cache(config, db, bus, io_lock=spi_lock)
                 wf.set_cache(cache_obj)
+                logger.info("Cache ready: src=%s dst=%s", config.sd_src, config.cache_path)
             except Exception as error:
                 logger.warning("SD card is mounted but cannot be read: %s", error)
                 available = False
@@ -147,8 +178,55 @@ def run_interactive(epd):
 
         if available != sd_available:
             sd_available = available
-            logger.info("SD card %s", "available" if available else "not available")
+            if available:
+                logger.info("SD card available at %s", config.sd_src)
+            else:
+                hint = ""
+                if args.mock and not Path(config.sd_src).is_dir():
+                    hint = f" (hint: mock expects sd_src dir to exist, got {config.sd_src})"
+                logger.info("SD card not available%s", hint)
             bus.emit("sd:changed", available=available)
+            # auto: da COMPLETED/ERROR torna IDLE su rimozione SD per permettere nuovo ciclo su reinserimento
+            if getattr(config, "operation_mode", "manual") == "auto" and wf.state in (State.COMPLETED, State.ERROR) and not available:
+                logger.info("Auto: SD removed in %s, returning to IDLE", wf.state.name)
+                wf.stop()
+
+        # auto headless: avvia backup appena SD pronta o pending da uploadare (anche senza SD)
+        if getattr(config, "operation_mode", "manual") == "auto" and wf.state == State.IDLE:
+            try:
+                pending = db.count_pending_uploads()
+            except Exception:
+                pending = 0
+            if available or pending > 0:
+                logger.info("Auto-start backup (mode=auto available=%s pending=%s)", available, pending)
+                wf.start()
+
+    def ensure_cache_on_demand() -> bool:
+        """Manual: tenta mount + Cache init al Confirm. Ritorna True se backup può partire (pending o cache)."""
+        nonlocal cache_obj
+        try:
+            pending = db.count_pending_uploads()
+        except Exception:
+            pending = 0
+        if pending > 0:
+            # upload differito senza SD
+            return True
+        if sd_card.try_mount():
+            if cache_obj is None:
+                try:
+                    cache_obj = Cache(config, db, bus, io_lock=spi_lock)
+                    wf.set_cache(cache_obj)
+                    logger.info("Cache ready (on-demand): src=%s dst=%s", config.sd_src, config.cache_path)
+                    # aggiorna stato SD
+                    bus.emit("sd:changed", available=True)
+                except Exception as e:
+                    logger.warning("On-demand SD mount ok but Cache init failed: %s", e)
+                    bus.emit("sd:changed", available=False)
+                    return False
+            return True
+        logger.info("On-demand mount failed: no SD available")
+        bus.emit("sd:changed", available=False)
+        return False
 
     sync_sd_card()
 
@@ -170,6 +248,7 @@ def run_interactive(epd):
             mock=args.mock,
             imagick=args.imagick,
             sync_sd_card=sync_sd_card,
+            ensure_cache_on_demand=ensure_cache_on_demand,
         )
     finally:
         sd_card.close()
@@ -207,6 +286,7 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
 def _loop(
     display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False, imagick=False,
     sync_sd_card=None,
+    ensure_cache_on_demand=None,
 ):
     redraw_pending = False
     last_refresh = 0.0
@@ -215,12 +295,6 @@ def _loop(
     def request_redraw():
         nonlocal redraw_pending
         if mock:
-            if active_view[0] is status_view:
-                print(
-                    f"[DISPLAY] {sb._title} | {status_view.status}  cached:{status_view.cached_count} pend:{status_view.pending_upload} up:{status_view.uploaded_count}  bar:{status_view.progress_current}/{status_view.progress_total}"
-                )
-            elif active_view[0] is menu_view:
-                print(f"[DISPLAY] {sb._title} | MENU: {menu.current_label}")
             display.render_full(active_view[0], sb, legend)
         else:
             redraw_pending = True
@@ -229,12 +303,78 @@ def _loop(
         bus, display, sb, legend, menu, status_view, menu_view, request_redraw
     )
 
+    def _mock_dump():
+        if not mock:
+            return
+        leg = legend._text
+        title = sb._title
+        bat = sb._battery
+        wifi_s = "ON" if getattr(sb, "_wifi", True) else "OFF"
+        if active_view[0] is status_view:
+            bv = status_view
+            state_name = getattr(getattr(backup, "state", None), "name", "?")
+            sd_s = "?" if bv._sd_available is None else ("ON" if bv._sd_available else "OFF")
+            bar = f" bar:{bv.progress_current}/{bv.progress_total}" if bv.progress_total else ""
+            cur = f" file:{bv.current_file}" if bv.current_file and bv.status == "Caching files..." else ""
+            stats = getattr(bv, "_stats", None)
+            if stats:
+                stats_s = f" | stats cached:{stats.get('cached_ok',0)}/{stats.get('cached_failed',0)} up:{stats.get('uploaded_ok',0)}/{stats.get('uploaded_failed',0)} rm:{stats.get('remote_deleted',0)} pr:{stats.get('pruned',0)}"
+                if stats.get("up_to_date"):
+                    stats_s += " up_to_date"
+            else:
+                stats_s = ""
+            err_s = f" err:{bv._error_msg}" if getattr(bv, "_error_msg", "") else ""
+            print(
+                f"[DISPLAY] BACKUP | {title} | {bv.status} ({state_name}) | wifi:{wifi_s} sd:{sd_s} bat:{bat}% | cached:{bv.cached_count} pend:{bv.pending_upload} up:{bv.uploaded_count}{bar}{cur}{stats_s}{err_s} | legend:{leg}"
+            )
+        elif active_view[0] is menu_view:
+            sel = menu.current_label
+            idx = menu._selected
+            total = len(menu._items)
+            items_preview = " | ".join(
+                f"{'>' if i == idx else ' '}{it.label}" for i, it in enumerate(menu._items)
+            )
+            print(
+                f"[DISPLAY] MENU | {title} | sel:{sel} ({idx+1}/{total}) | wifi:{wifi_s} bat:{bat}% | legend:{leg} | {items_preview}"
+            )
+        else:
+            print(f"[DISPLAY] {title} | legend:{leg}")
+
+    _orig_render_full = display.render_full
+
+    def _wrapped_render_full(content_view, status_bar, legend_obj):
+        _orig_render_full(content_view, status_bar, legend_obj)
+        _mock_dump()
+
+    if mock:
+        display.render_full = _wrapped_render_full
+
     # --- Key routing ---
     def on_key_press(key, **kw):
         if active_view[0] is status_view:
             if key in ("LEFT", "a"):
                 bus.emit("menu:opened")
             else:
+                # manual: su Confirm ritenta mount on-demand se non c'è cache e non c'è pending
+                if (
+                    getattr(config, "operation_mode", "manual") == "manual"
+                    and backup.state == State.IDLE
+                    and key in ("RIGHT", "d", "\r", "\n")
+                    and ensure_cache_on_demand is not None
+                ):
+                    pending = 0
+                    try:
+                        pending = db.count_pending_uploads() if db else 0
+                    except Exception:
+                        pass
+                    if pending == 0:
+                        ok = ensure_cache_on_demand()
+                        if not ok:
+                            sb.set_title("Amarelli")
+                            # status_view già aggiornata via sd:changed
+                            legend.set_text("\u25c0 menu  \u25b6 backup")
+                            bus.emit("ui:redraw")
+                            return
                 backup.handle_key_event(key)
         elif active_view[0] is menu_view:
             menu.handle_key_event(key)
@@ -243,7 +383,7 @@ def _loop(
 
     # --- Initial overview display ---
     sb.set_title("Amarelli")
-    legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
+    legend.set_text("\u25c0 menu  \u25b6 backup")
     status_view.refresh()
     display.render_full(active_view[0], sb, legend)
 
@@ -326,7 +466,7 @@ def _loop(
                 logger.error("Error stopping AP: %s", e)
         sb.set_wifi(False)
         sb.set_title("Amarelli")
-        legend.set_text("\u25b6 backup  \u25c0 menu  Q quit")
+        legend.set_text("\u25c0 menu  \u25b6 backup")
         display.render_full(active_view[0], sb, legend)
 
     bus.on("wifi:reset", stop_hotspot)
@@ -340,25 +480,19 @@ def _loop(
         except FileNotFoundError:
             print("[imagick] 'display' not found. Install ImageMagick.")
 
-    print("Amarelli interactive. \u25b6 action, \u25c0 back, Q quit.")
+    print("Amarelli interactive. \u25c0 back, \u25b6 action")
     if mock:
         print("          b B battery  i wifi  t title  (mock)")
 
     while True:
         now = time.monotonic()
-        if sync_sd_card is not None and now - last_sd_check >= 0.25:
+        poll_interval = 0.25 if getattr(config, "operation_mode", "manual") == "auto" else 1.0
+        if sync_sd_card is not None and now - last_sd_check >= poll_interval:
             sync_sd_card()
             last_sd_check = now
 
         if redraw_pending:
             redraw_pending = False
-            if mock:
-                if active_view[0] is status_view:
-                    print(
-                        f"[DISPLAY] {sb._title} | {status_view.status}  cached:{status_view.cached_count} pend:{status_view.pending_upload} up:{status_view.uploaded_count}"
-                    )
-                elif active_view[0] is menu_view:
-                    print(f"[DISPLAY] {sb._title} | MENU: {menu.current_label}")
             display.render_full(active_view[0], sb, legend)
 
         ch = keys.get_key()

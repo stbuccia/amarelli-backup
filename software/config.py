@@ -29,6 +29,17 @@ class Config:
 
         self.__dict__.update(config)
 
+        # operation_mode: auto = mounting/caching/uploading automatici (headless LED), manual = passo-passo su conferma
+        if getattr(self, "operation_mode", None) not in ("auto", "manual"):
+            self.operation_mode = "manual"
+
+        # Il remoto rclone puo' stare nel .env: usato solo se config.json
+        # non lo definisce (o lo lascia vuoto).
+        if not getattr(self, "rclone_remote", ""):
+            self.rclone_remote = os.getenv("RCLONE_REMOTE", "")
+        if not getattr(self, "rclone_config", ""):
+            self.rclone_config = os.getenv("RCLONE_CONFIG_FILE", "")
+
         if bus:
             bus.on("config:set", self._on_config_set)
 
@@ -39,6 +50,9 @@ class Config:
         setattr(self, key, value)
 
     def _on_config_set(self, key, value, **kw):
+        if key == "operation_mode" and value not in ("auto", "manual"):
+            logger.warning("Invalid operation_mode %r, ignored", value)
+            return
         try:
             with open(CONFIG_FILE) as _f:
                 _cfg = json.load(_f)

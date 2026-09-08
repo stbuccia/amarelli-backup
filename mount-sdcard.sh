@@ -1,54 +1,102 @@
 #!/bin/bash
-MNT="/mnt/sdcard"
-case "${1:-help}" in
-    mount)
-        if mount | grep -q "$MNT"; then
-            echo "SD già montata su $MNT"
-            exit 0
+# Monta/smonta la SD collegata allo slot SPI (mmc_spi su spi0.1).
+# Il mount point coincide con "sd_src" di config.json.
+MNT="${AMARELLI_SD_MNT:-/mnt/amarelli-sd}"
+SPI_SPEED="${AMARELLI_SPI_SPEED:-10000000}"
+# ro per default: la SD e' la sorgente del backup, non va scritta.
+MOUNT_OPTS="${AMARELLI_MOUNT_OPTS:-ro}"
+
+# Prima partizione non montata su un mmcblk diverso da mmcblk0 (la card di
+# sistema). Il tipo di filesystem NON viene forzato: lo rileva il kernel.
+find_sd_partition() {
+    lsblk -ln -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null |
+        awk '/^mmcblk[1-9][0-9]*p[0-9]+/ && $2 != "" && $3 == "" {print "/dev/"$1; exit}'
+}
+
+overlay_loaded() {
+    [[ -e /sys/bus/spi/devices/spi0.1 ]]
+}
+
+do_mount() {
+    if findmnt -rn "$MNT" >/dev/null 2>&1; then
+        echo "SD gia' montata su $MNT"
+        return 0
+    fi
+
+    local part
+    part=$(find_sd_partition)
+
+    if [[ -z "$part" ]]; then
+        if overlay_loaded; then
+            echo "ERRORE: overlay gia' caricato ma nessuna partizione rilevata." >&2
+            echo "La card non risponde: controlla MISO (pin 21), CS su CE1 (pin 26) e il pull-up." >&2
+            return 1
         fi
-        # Cerca partizioni mmcblk non montate
-        part=$(lsblk -ln -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null | \
-               awk '/^mmcblk[0-9]+p[0-9]+/ && $2 != "" && $3 == "" {print "/dev/"$1; exit}')
-        if [[ -n "$part" ]]; then
-            echo "Trovata partizione già disponibile: $part"
-            sudo mount -t ext4 "$part" "$MNT" && echo "SD montata su $MNT" || echo "ERRORE mount"
-            exit $?
-        fi
-        # Nessuna partizione trovata, applica overlay
         echo "Nessuna partizione SD trovata. Applico dtoverlay..."
-        sudo dtoverlay anyspi spi0-1 dev="mmc-spi-slot" speed=20000000
-        for ((i=0; i<10; i++)); do
-            part=$(lsblk -ln -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null | \
-                   awk '/^mmcblk[0-9]+p[0-9]+/ && $2 != "" && $3 == "" {print "/dev/"$1; exit}')
+        if ! sudo dtoverlay anyspi spi0-1 dev="mmc-spi-slot" speed="$SPI_SPEED"; then
+            echo "ERRORE: impossibile applicare l'overlay anyspi." >&2
+            return 1
+        fi
+        local i
+        for ((i = 0; i < 10; i++)); do
+            part=$(find_sd_partition)
             [[ -n "$part" ]] && break
             sleep 1
         done
-        if [[ -z "$part" ]]; then
-            echo "ERRORE: nessuna partizione SD rilevata dopo overlay."
-            exit 1
-        fi
-        sudo mount -t ext4 "$part" "$MNT" && echo "SD montata su $MNT" || echo "ERRORE mount"
-        ;;
-    umount)
+    fi
+
+    if [[ -z "$part" ]]; then
+        echo "ERRORE: nessuna partizione SD rilevata dopo l'overlay." >&2
+        return 1
+    fi
+
+    echo "Partizione trovata: $part"
+    sudo mkdir -p "$MNT" || return 1
+    if sudo mount -o "$MOUNT_OPTS" "$part" "$MNT"; then
+        echo "SD montata su $MNT ($(findmnt -rn -o FSTYPE "$MNT"), $MOUNT_OPTS)"
+        return 0
+    fi
+    echo "ERRORE mount di $part su $MNT" >&2
+    return 1
+}
+
+do_umount() {
+    if findmnt -rn "$MNT" >/dev/null 2>&1; then
         echo "Smonto $MNT..."
-        sudo umount "$MNT" 2>/dev/null && echo "Smontata." || echo "$MNT non era montata"
+        sudo umount "$MNT" && echo "Smontata." || {
+            echo "ERRORE: $MNT occupata." >&2
+            return 1
+        }
+    else
+        echo "$MNT non era montata"
+    fi
+    if overlay_loaded; then
         echo "Rimuovo overlay..."
         sudo dtoverlay -r anyspi 2>/dev/null || echo "Nessun overlay da rimuovere."
-        ;;
-    status)
-        if mount | grep -q "$MNT"; then
-            dev=$(mount | grep "$MNT" | awk '{print $1}')
-            echo "SD MONTATA: $dev -> $MNT"
+    fi
+    return 0
+}
+
+do_status() {
+    if findmnt -rn "$MNT" >/dev/null 2>&1; then
+        echo "SD MONTATA: $(findmnt -rn -o SOURCE,FSTYPE,OPTIONS "$MNT") -> $MNT"
+    else
+        echo "SD NON montata"
+        local part
+        part=$(find_sd_partition)
+        if [[ -n "$part" ]]; then
+            echo "Tuttavia partizione rilevata (non montata): $part"
+        elif overlay_loaded; then
+            echo "Overlay caricato (spi0.1) ma nessuna card rilevata."
         else
-            echo "SD NON montata"
-            part=$(lsblk -ln -o NAME,FSTYPE,MOUNTPOINT 2>/dev/null | \
-                   awk '/^mmcblk[0-9]+p[0-9]+/ && $2 != "" && $3 == "" {print "/dev/"$1; exit}')
-            if [[ -n "$part" ]]; then
-                echo "Tuttavia partizione rilevata (non montata): $part"
-            fi
+            echo "Overlay non caricato."
         fi
-        ;;
-    *)
-        echo "Uso: $0 {mount|umount|status}"
-        ;;
+    fi
+}
+
+case "${1:-help}" in
+    mount) do_mount ;;
+    umount) do_umount ;;
+    status) do_status ;;
+    *) echo "Uso: $0 {mount|umount|status}" ;;
 esac

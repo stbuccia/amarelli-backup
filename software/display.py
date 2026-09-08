@@ -153,6 +153,33 @@ class Legend:
         _render_icons_in_text(draw, (width - tw) // 2, ty, self._text, font, fill=0)
 
 
+class LockView:
+    """Schermata di blocco dedicata per reed chiuso (sportello)."""
+
+    MARGIN_X = 4
+    LINE_SPACING = 4
+
+    def render(self, draw, font, width, height, y_offset=0, bottom_margin=0):
+        draw.rectangle([(0, y_offset), (width, height)], fill=255)
+        _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
+        line_h = th + self.LINE_SPACING
+        # Icona lucchetto stilizzata centrata
+        cx = width // 2
+        cy = y_offset + (height - y_offset - bottom_margin) // 2 - 6
+        # corpo lucchetto
+        bw, bh = 36, 22
+        bx, by = cx - bw // 2, cy - 2
+        draw.rectangle([(bx, by), (bx + bw, by + bh)], fill=255, outline=0, width=2)
+        draw.rectangle([(bx + 12, by + 8), (bx + 24, by + 16)], fill=0)
+        # arco lucchetto
+        draw.arc([(bx + 8, by - 12), (bx + 28, by + 10)], 180, 0, fill=0, width=2)
+        # Testo centrato sotto
+        y = by + bh + 8
+        text = "Schermo bloccato"
+        tw = draw.textbbox((0, 0), text, font=font)[2]
+        draw.text(((width - tw) // 2, y), text, font=font, fill=0)
+
+
 class BackupStatusView:
     MARGIN_X = 4
     LINE_SPACING = 2
@@ -170,6 +197,7 @@ class BackupStatusView:
         self._sd_available = None
         self._stats = None  # last run stats: {cached_ok, cached_failed, uploaded_ok, uploaded_failed, remote_deleted, pruned, up_to_date}
         self._error_msg = ""
+        self._active_phase = None  # fase operativa per etichetta per-fase in Paused/Retrying
         self._bus = bus
         if bus:
             bus.on("backup:state", self._on_backup_state)
@@ -201,6 +229,12 @@ class BackupStatusView:
         stats = kw.get("stats")
         error = kw.get("error", "")
         up_to_date = kw.get("up_to_date", False)
+        # Ricorda la fase operativa corrente (CACHING/UPLOADING/...) così
+        # PAUSED/RETRYING mostrano la stessa etichetta per-fase, senza x/tot.
+        if state in (State.CACHING, State.UPLOADING, State.REMOTE_CLEANUP, State.PRUNING):
+            self._active_phase = state
+        elif state == State.IDLE:
+            self._active_phase = None
         if state == State.COMPLETED and up_to_date:
             self.status = "Already up to date"
         else:
@@ -239,7 +273,7 @@ class BackupStatusView:
             State.UPLOADING: "\u25c0 pause",
             State.REMOTE_CLEANUP: "\u25c0 pause",
             State.PRUNING: "\u25c0 pause",
-            State.PAUSED: "\u25c0 stop  \u25b6 resume",
+            State.PAUSED: "\u25c0 menu  \u25b6 resume",
             State.RETRYING: "\u25c0 pause",
             State.COMPLETED: "\u25c0 menu  \u25b6 backup",
             State.ERROR: "\u25c0 menu  \u25b6 backup",
@@ -303,12 +337,14 @@ class BackupStatusView:
         draw.text((x, y), f"SD: {sd_label}", font=font, fill=0)
         y += line_h
 
-        if self.progress_total > 0:
+        if self.progress_total > 0 and self.status != "Done":
             bar_y = y
             bar_h = max(4, th - 4)
             bar_w = width - 2 * x
+            # evita divisione per zero e preserva barra anche in Paused
+            denom = self.progress_total if self.progress_total else 1
             fill = max(
-                0, min(bar_w, int(bar_w * self.progress_current / self.progress_total))
+                0, min(bar_w, int(bar_w * self.progress_current / denom))
             )
             draw.rectangle(
                 [(x, bar_y), (x + bar_w, bar_y + bar_h)], fill=255, outline=0
@@ -319,9 +355,43 @@ class BackupStatusView:
                 )
             y += bar_h + self.LINE_SPACING
 
-        if self.status == "Caching files..." and self.current_file:
-            draw.text((x, y), self.current_file[:30], font=font, fill=0)
-            return
+            # file corrente subito sotto la barra (anche in Paused)
+            if self.current_file:
+                if y + line_h <= height - bottom_margin - 2:
+                    draw.text((x, y), self.current_file[:30], font=font, fill=0)
+                    y += line_h
+
+            # contatore per-fase sotto la barra (sostituisce i vecchi Cached / To upload)
+            per_phase = None
+            if self.status == "Caching files...":
+                per_phase = f"Cached: {self.progress_current}/{self.progress_total}"
+            elif self.status == "Uploading...":
+                per_phase = f"Uploaded: {self.progress_current}/{self.progress_total}"
+            elif self.status == "Cleaning remote...":
+                per_phase = f"Cleaned: {self.progress_current}/{self.progress_total}"
+            elif self.status == "Pruning cache...":
+                per_phase = f"Pruned: {self.progress_current}/{self.progress_total}"
+            elif self.status in ("Retrying...", "Paused"):
+                # Pausa/retry mantengono la barra ma NON il conteggio x/tot:
+                # mostrano la stessa etichetta della fase operativa (Cached/Uploaded/...)
+                ap = self._active_phase
+                if ap == State.CACHING:
+                    per_phase = "Cached"
+                elif ap == State.UPLOADING:
+                    per_phase = "Uploaded"
+                elif ap == State.REMOTE_CLEANUP:
+                    per_phase = "Cleaned"
+                elif ap == State.PRUNING:
+                    per_phase = "Pruned"
+                else:
+                    per_phase = ""
+
+            if per_phase and y + line_h <= height - bottom_margin - 2:
+                draw.text((x, y), per_phase, font=font, fill=0)
+                y += line_h
+            # per stati attivi non mostrare i vecchi contatori generici
+            if self.status in ("Caching files...", "Uploading...", "Cleaning remote...", "Pruning cache...", "Retrying...", "Paused"):
+                return
 
         # COMPLETED / ERROR / Already up to date -> show stats of last run
         if self.status in ("Done", "Error", "Already up to date") and self._stats is not None:
@@ -366,15 +436,8 @@ class BackupStatusView:
                     draw.text((x, y), self._error_msg[:30], font=font, fill=0)
                 return
 
-        draw.text((x, y), f"Cached: {self.cached_count} files", font=font, fill=0)
-        y += line_h
-        if y + line_h > height - bottom_margin - 2:
-            return
-        draw.text((x, y), f"To upload: {self.pending_upload}", font=font, fill=0)
-        y += line_h
-        if y + line_h > height - bottom_margin - 2:
-            return
-        draw.text((x, y), f"Uploaded: {self.uploaded_count}", font=font, fill=0)
+        # IDLE / Ready: nessun contatore generico (richiesta utente: rimossi Cached / To upload)
+        # mostra solo stato WiFi/SD già sopra, nessun testo aggiuntivo
 
 
 class MenuView:
@@ -453,6 +516,8 @@ class Display:
         self._initialized = False
         self.snapshot_path = snapshot_path
         self._io_lock = io_lock
+        self._suspended = False
+        self._last_frame = None
 
     @property
     def font(self):
@@ -471,7 +536,31 @@ class Display:
 
     def sleep(self):
         with self._io_lock or nullcontext():
+            if not self._suspended:
+                self._epd.sleep()
+
+    @property
+    def suspended(self):
+        return self._suspended
+
+    def suspend(self):
+        """Ferma l'hardware e-ink; i render successivi restano in memoria."""
+        with self._io_lock or nullcontext():
+            if self._suspended:
+                return
             self._epd.sleep()
+            self._suspended = True
+        logger.info("Display sospeso: Coperchio chiuso")
+
+    def resume(self):
+        """Riattiva l'e-ink senza ridisegnare il lock; il prossimo render_full aggiornerà lo stato corrente."""
+        with self._io_lock or nullcontext():
+            if not self._suspended:
+                return
+            self._suspended = False
+            self._epd.init()
+            self._initialized = True
+        logger.info("Display riattivato: Coperchio aperto")
 
     def _compose(self, content_view, status_bar, legend):
         img = Image.new("1", (self.WIDTH, self.HEIGHT), 255)
@@ -490,9 +579,12 @@ class Display:
 
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
+        self._last_frame = img
         if self.snapshot_path:
             img.save(self.snapshot_path)
         with self._io_lock or nullcontext():
+            if self._suspended:
+                return
             if not self._initialized:
                 self._epd.init()
                 self._epd.display(self._epd.getbuffer(img))

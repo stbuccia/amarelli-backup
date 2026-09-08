@@ -33,6 +33,12 @@ class Config:
         if getattr(self, "operation_mode", None) not in ("auto", "manual"):
             self.operation_mode = "manual"
 
+        # sd_mount: se False salta lsblk/mount e tratta sd_src come cartella locale (utile per test con fake SD)
+        if getattr(self, "sd_mount", None) is None:
+            self.sd_mount = True
+        else:
+            self.sd_mount = bool(self.sd_mount)
+
         # Il remoto rclone puo' stare nel .env: usato solo se config.json
         # non lo definisce (o lo lascia vuoto).
         if not getattr(self, "rclone_remote", ""):
@@ -52,6 +58,9 @@ class Config:
     def _on_config_set(self, key, value, **kw):
         if key == "operation_mode" and value not in ("auto", "manual"):
             logger.warning("Invalid operation_mode %r, ignored", value)
+            return
+        if key == "sd_mount" and not isinstance(value, bool):
+            logger.warning("Invalid sd_mount %r, expected bool", value)
             return
         try:
             with open(CONFIG_FILE) as _f:

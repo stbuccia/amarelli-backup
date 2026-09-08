@@ -106,3 +106,45 @@ class GpioKeyListener(KeyListener):
     def cleanup(self):
         for button in self._buttons:
             button.close()
+
+
+class ReedSwitch:
+    """Reed su BCM16: chiuso con magnete, aperto senza magnete."""
+
+    def __init__(self, pin=16, enabled=True):
+        self._events = SimpleQueue()
+        self._button = None
+        self._closed = False
+        if not enabled:
+            return
+        try:
+            from gpiozero import Button
+
+            self._button = Button(pin, pull_up=True, bounce_time=0.1)
+            self._closed = self._button.is_pressed
+            self._button.when_pressed = lambda: self._set_closed(True)
+            self._button.when_released = lambda: self._set_closed(False)
+        except ImportError:
+            logger.warning("gpiozero not available, ReedSwitch is disabled")
+        except Exception as error:
+            logger.warning("Reed switch setup failed: %s", error)
+
+    @property
+    def is_closed(self):
+        return self._closed
+
+    def _set_closed(self, closed):
+        closed = bool(closed)
+        if closed != self._closed:
+            self._closed = closed
+            self._events.put(closed)
+
+    def get_state_change(self):
+        try:
+            return self._events.get_nowait()
+        except Exception:
+            return None
+
+    def cleanup(self):
+        if self._button is not None:
+            self._button.close()

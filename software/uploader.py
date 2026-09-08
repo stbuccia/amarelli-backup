@@ -117,6 +117,9 @@ class Uploader(ABC):
         last_error = None
 
         for f in files:
+            if getattr(self, "_cancel", None) is not None and self._cancel.is_set():
+                logger.info("Upload paused by user at %s", f.cache_path)
+                break
             local_path = Path(f.cache_path)
             remote_path = self._remote_target(cloud_dst, local_src, local_path)
 
@@ -155,6 +158,9 @@ class Uploader(ABC):
         last_error = None
 
         for f in files:
+            if getattr(self, "_cancel", None) is not None and self._cancel.is_set():
+                logger.info("Remote cleanup paused by user")
+                break
             remote_path = f.remote_path
             if not remote_path:
                 continue

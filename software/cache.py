@@ -85,8 +85,6 @@ class Cache:
 
     def _walk(self):
         for root, dirs, filenames in os.walk(self.sd_src, onerror=self._raise_sd_error):
-            if Path(root) == self.sd_src and "DCIM" in dirs:
-                dirs.insert(0, dirs.pop(dirs.index("DCIM")))
             yield Path(root), dirs, filenames
 
     def count_uncached(self) -> int:
@@ -105,9 +103,14 @@ class Cache:
         failures = []
         ok = 0
         processed = 0
+        cancel = getattr(self, "_cancel", None)
         try:
             for root, _, filenames in self._walk():
                 for filename in filenames:
+                    if cancel is not None and cancel.is_set():
+                        logger.info("Caching interrupted by pause at %s", filename)
+                        self.last_copy_stats = {"ok": ok, "failed": len(failures), "total": processed}
+                        return
                     src = root / filename
                     self._last_seen_paths.add(str(src))
                     if not self._is_allowed_file(src):
@@ -121,17 +124,47 @@ class Cache:
                         logger.info("Already cached (size and mtime match): %s", src)
                         continue
 
+                    # check pause prima di copiare file pesanti
+                    if cancel is not None and cancel.is_set():
+                        logger.info("Caching paused before copy %s", src)
+                        self.last_copy_stats = {"ok": ok, "failed": len(failures), "total": processed}
+                        return
                     partial = None
                     try:
-                        lock = self._io_lock or nullcontext()
-                        with lock:
-                            dst = self.local_dst / src.relative_to(self.sd_src)
-                            partial = dst.with_name(f".{dst.name}.partial")
-                            dst.parent.mkdir(parents=True, exist_ok=True)
-                            partial.unlink(missing_ok=True)
-                            logger.info("Copying without source hash: %s -> %s", src, dst)
-                            shutil.copy2(src, partial)
-                            partial.replace(dst)
+                        dst = self.local_dst / src.relative_to(self.sd_src)
+                        partial = dst.with_name(f".{dst.name}.partial")
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        partial.unlink(missing_ok=True)
+                        logger.info("Copying without source hash: %s -> %s", src, dst)
+                        # Copia a chunk per rendere la pausa reattiva e non bloccare il display
+                        # (a 1 MHz un NEF da 20 MB con shutil.copy2 bloccherebbe per >2 min)
+                        # Niente spi_lock qui: la SD è via kernel mmc_spi, il display via spidev;
+                        # il kernel serializza il bus, il lock Python bloccherebbe solo l'UI.
+                        chunk_size = 64 * 1024
+                        with open(src, "rb") as fsrc, open(partial, "wb") as fdst:
+                            while True:
+                                if cancel is not None and cancel.is_set():
+                                    logger.info("Caching paused mid-copy %s", src)
+                                    try:
+                                        fdst.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        fsrc.close()
+                                    except Exception:
+                                        pass
+                                    partial.unlink(missing_ok=True)
+                                    self.last_copy_stats = {"ok": ok, "failed": len(failures), "total": processed}
+                                    return
+                                chunk = fsrc.read(chunk_size)
+                                if not chunk:
+                                    break
+                                fdst.write(chunk)
+                        try:
+                            shutil.copystat(src, partial)
+                        except OSError:
+                            pass
+                        partial.replace(dst)
                         logger.info("Hashing local cached file: %s", dst)
                         file_hash = xx_hash64(dst)
                         if file_hash is None:
@@ -167,6 +200,10 @@ class Cache:
             )
 
     def prune(self):
+        if getattr(self, "_cancel", None) is not None and self._cancel.is_set():
+            logger.info("Pruning interrupted by pause")
+            self.last_prune_stats = {"ok": 0, "failed": 0}
+            return
         if self._prune_min_days is None:
             logger.info("Cache pruning is disabled")
             self.last_prune_stats = {"ok": 0, "failed": 0}

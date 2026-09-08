@@ -1,0 +1,1 @@
+raspberry ALL=(root) NOPASSWD: /usr/bin/mkdir -p /mnt/amarelli-sd, /usr/bin/mount -o ro /dev/mmcblk[0-9]* /mnt/amarelli-sd, /usr/bin/mount -o ro /dev/sd[a-z][0-9]* /mnt/amarelli-sd, /usr/bin/mount -o ro /dev/sd[a-z] /mnt/amarelli-sd, /usr/bin/umount /mnt/amarelli-sd

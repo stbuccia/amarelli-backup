@@ -1,0 +1,2 @@
+# Keep this generic card reader awake; it has repeatedly frozen after enumeration.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="14cd", ATTR{idProduct}=="1212", TEST=="power/control", ATTR{power/control}="on"

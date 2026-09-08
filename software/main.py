@@ -72,12 +72,13 @@ from display import (
     Legend,
     BackupStatusView,
     MenuView,
+    LockView,
     Display,
     load_font,
     setup_ui_handlers,
 )
 from menu import Menu
-from keylistener import TerminalKeyListener, GpioKeyListener
+from keylistener import TerminalKeyListener, GpioKeyListener, ReedSwitch
 from eventbus import bus
 from config import Config
 from database import Database
@@ -88,6 +89,7 @@ from log import setup_logger
 from backup import Backup, State
 from wifi import WiFiManager
 from flask_app import create_app
+from led_status import LedStatus
 
 
 def get_ip_address() -> str:
@@ -107,6 +109,12 @@ def run_interactive(epd):
     spi_lock = threading.Lock()
     display = Display(epd, font, snapshot_path=snapshot_path, io_lock=spi_lock)
     display.init()
+
+    boot_view = BackupStatusView()
+    boot_view.status = "Starting..."
+    display.render_full(boot_view, StatusBar(), Legend("Initializing..."))
+
+    led = LedStatus(bus=bus, mock=False)
 
     config = Config(bus=bus)
     setup_logger(config)
@@ -134,7 +142,7 @@ def run_interactive(epd):
         logger.warning("Uploader init skipped: %s", e)
 
     wf = Backup(cache_obj, uploader, db, bus, mode=getattr(config, 'mode', 'upload'))
-    sd_card = SdCard(config.sd_src, mock=args.mock)
+    sd_card = SdCard(config.sd_src, mock=args.mock, mount_enabled=getattr(config, "sd_mount", True))
 
     def on_uploader_config_changed(key, value, **kw):
         if key not in ("uploader", "rclone_remote"):
@@ -159,35 +167,39 @@ def run_interactive(epd):
     def sync_sd_card():
         nonlocal cache_obj, sd_available
         mode = getattr(config, "operation_mode", "manual")
+        # In auto montiamo subito, in manuale distinguiamo presente (device) vs montata (cache pronta)
         if mode == "auto":
-            available = sd_card.try_mount()
+            cache_available = sd_card.try_mount()
+            ui_available = cache_available
         else:
-            # manual: lightweight detect only, no sudo mount
-            available = sd_card.is_available()
-        if available and cache_obj is None:
+            present = sd_card.is_present()
+            mounted = sd_card.is_available()
+            ui_available = present
+            cache_available = mounted
+        if cache_available and cache_obj is None:
             try:
                 cache_obj = Cache(config, db, bus, io_lock=spi_lock)
                 wf.set_cache(cache_obj)
                 logger.info("Cache ready: src=%s dst=%s", config.sd_src, config.cache_path)
             except Exception as error:
                 logger.warning("SD card is mounted but cannot be read: %s", error)
-                available = False
-        elif not available and cache_obj is not None:
+                cache_available = False
+        elif not cache_available and cache_obj is not None:
             cache_obj = None
             wf.set_cache(None)
 
-        if available != sd_available:
-            sd_available = available
-            if available:
+        if ui_available != sd_available:
+            sd_available = ui_available
+            if ui_available:
                 logger.info("SD card available at %s", config.sd_src)
             else:
                 hint = ""
                 if args.mock and not Path(config.sd_src).is_dir():
                     hint = f" (hint: mock expects sd_src dir to exist, got {config.sd_src})"
                 logger.info("SD card not available%s", hint)
-            bus.emit("sd:changed", available=available)
+            bus.emit("sd:changed", available=ui_available)
             # auto: da COMPLETED/ERROR torna IDLE su rimozione SD per permettere nuovo ciclo su reinserimento
-            if getattr(config, "operation_mode", "manual") == "auto" and wf.state in (State.COMPLETED, State.ERROR) and not available:
+            if getattr(config, "operation_mode", "manual") == "auto" and wf.state in (State.COMPLETED, State.ERROR) and not ui_available:
                 logger.info("Auto: SD removed in %s, returning to IDLE", wf.state.name)
                 wf.stop()
 
@@ -197,40 +209,52 @@ def run_interactive(epd):
                 pending = db.count_pending_uploads()
             except Exception:
                 pending = 0
-            if available or pending > 0:
-                logger.info("Auto-start backup (mode=auto available=%s pending=%s)", available, pending)
+            if ui_available or pending > 0:
+                logger.info("Auto-start backup (mode=auto available=%s pending=%s)", ui_available, pending)
                 wf.start()
 
     def ensure_cache_on_demand() -> bool:
-        """Manual: tenta mount + Cache init al Confirm. Ritorna True se backup può partire (pending o cache)."""
+        """Manual: tenta mount + Cache init al Confirm. Ritorna True se backup può partire (pending o cache).
+        Se la USB/SD è stata inserita dopo l'avvio, tenta sempre il mount prima di decidere."""
         nonlocal cache_obj
+        # Tenta mount in ogni caso: se la chiavetta USB è stata appena inserita, va rilevata
+        mount_ok = sd_card.try_mount()
+        if mount_ok and cache_obj is None:
+            try:
+                cache_obj = Cache(config, db, bus, io_lock=spi_lock)
+                wf.set_cache(cache_obj)
+                logger.info("Cache ready (on-demand): src=%s dst=%s", config.sd_src, config.cache_path)
+                bus.emit("sd:changed", available=True)
+            except Exception as e:
+                logger.warning("On-demand SD mount ok but Cache init failed: %s", e)
+                bus.emit("sd:changed", available=False)
+                # non fallire se c'è pending da uploadare
+                try:
+                    pending = db.count_pending_uploads()
+                except Exception:
+                    pending = 0
+                return pending > 0
+        elif mount_ok:
+            bus.emit("sd:changed", available=True)
+        else:
+            bus.emit("sd:changed", available=False)
+
         try:
             pending = db.count_pending_uploads()
         except Exception:
             pending = 0
-        if pending > 0:
-            # upload differito senza SD
-            return True
-        if sd_card.try_mount():
-            if cache_obj is None:
-                try:
-                    cache_obj = Cache(config, db, bus, io_lock=spi_lock)
-                    wf.set_cache(cache_obj)
-                    logger.info("Cache ready (on-demand): src=%s dst=%s", config.sd_src, config.cache_path)
-                    # aggiorna stato SD
-                    bus.emit("sd:changed", available=True)
-                except Exception as e:
-                    logger.warning("On-demand SD mount ok but Cache init failed: %s", e)
-                    bus.emit("sd:changed", available=False)
-                    return False
+        # Può partire se c'è cache (appena montata) o se c'è pending da uploadare
+        if mount_ok or pending > 0:
             return True
         logger.info("On-demand mount failed: no SD available")
-        bus.emit("sd:changed", available=False)
         return False
 
     sync_sd_card()
 
     keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(13, 6, 5, 19))
+    reed = ReedSwitch(pin=16, enabled=not args.mock)
+    if reed.is_closed:
+        display.suspend()
 
     try:
         _loop(
@@ -249,9 +273,15 @@ def run_interactive(epd):
             imagick=args.imagick,
             sync_sd_card=sync_sd_card,
             ensure_cache_on_demand=ensure_cache_on_demand,
+            reed=reed,
         )
     finally:
+        try:
+            led.cleanup()
+        except Exception:
+            pass
         sd_card.close()
+        reed.cleanup()
         keys.cleanup()
         display.init_full()
         display.sleep()
@@ -287,6 +317,7 @@ def _loop(
     display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False, imagick=False,
     sync_sd_card=None,
     ensure_cache_on_demand=None,
+    reed=None,
 ):
     redraw_pending = False
     last_refresh = 0.0
@@ -351,7 +382,25 @@ def _loop(
 
     # --- Key routing ---
     def on_key_press(key, **kw):
+        logger.info("Key pressed: %s state=%s active=%s view=%s", key, backup.state.name, backup.is_active, "status" if active_view[0] is status_view else "menu")
         if active_view[0] is status_view:
+            # Operazioni lunghe: qualsiasi tasto laterale mette in pausa e ferma blink
+            if backup.is_active and key in ("LEFT", "RIGHT", "UP", "DOWN", "a", "d"):
+                # LEFT/RIGHT/UP/DOWN tutti mettono in pausa per tollerare cablaggi diversi (pin 29/35/38 vs 13/6/5/19)
+                if backup.pause():
+                    logger.info("Pause requested via %s", key)
+                    return
+                # se pause non riuscito (es. già in pausa), non aprire menu
+                return
+            # Pausa: status "Paused", LED fisso arancione, RIGHT resume, LEFT apre menu
+            if backup.state == State.PAUSED:
+                if key in ("RIGHT", "d", "\r", "\n"):
+                    backup.resume()
+                    return
+                if key in ("LEFT", "a", "UP", "DOWN"):
+                    bus.emit("menu:opened")
+                    return
+                return
             if key in ("LEFT", "a"):
                 bus.emit("menu:opened")
             else:
@@ -485,6 +534,21 @@ def _loop(
         print("          b B battery  i wifi  t title  (mock)")
 
     while True:
+        if reed is not None:
+            reed_closed = reed.get_state_change()
+            if reed_closed is True:
+                logger.info("Coperchio chiuso")
+                # Mostra schermata di blocco dedicata prima di sospendere
+                lock_view = LockView()
+                # usa legend dedicata per il blocco
+                display.render_full(lock_view, sb, Legend("Coperchio chiuso"))
+                display.suspend()
+            elif reed_closed is False:
+                logger.info("Coperchio aperto")
+                display.resume()
+                # Ripristina vista corrente con refresh completo
+                display.render_full(active_view[0], sb, legend)
+
         now = time.monotonic()
         poll_interval = 0.25 if getattr(config, "operation_mode", "manual") == "auto" else 1.0
         if sync_sd_card is not None and now - last_sd_check >= poll_interval:

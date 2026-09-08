@@ -6,6 +6,8 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 VENV_DIR="$PROJECT_DIR/.venv"
 BOOT_CONFIG=""
 SPI_OVERLAY='dtoverlay=anyspi,spi0-1,dev=mmc-spi-slot,speed=10000000'
+SYSTEMD_DIR=/etc/systemd/system
+SUDOERS_DIR=/etc/sudoers.d
 
 fail() {
     printf 'Error: %s\n' "$*" >&2
@@ -117,11 +119,17 @@ else
 fi
 
 printf 'Configuring GPIO permissions for LEDs (rpi_ws281x)...\n'
-if id -nG "$USER" | tr ' ' '\n' | grep -qx gpio; then
-    printf 'User %s already in gpio group.\n' "$USER"
+missing_groups=""
+for grp in gpio kmem spi; do
+    if ! id -nG "$USER" | tr ' ' '\n' | grep -qx "$grp"; then
+        missing_groups="$missing_groups $grp"
+    fi
+done
+if [ -z "$missing_groups" ]; then
+    printf 'User %s already in gpio,kmem,spi groups.\n' "$USER"
 else
     if sudo usermod -a -G gpio,kmem,spi "$USER" 2>/dev/null; then
-        printf 'Added %s to gpio,kmem,spi groups (logout/login or reboot required).\n' "$USER"
+        printf 'Added %s to groups:%s (logout/login or reboot required).\n' "$USER" "$missing_groups"
     else
         printf 'Warning: could not add %s to gpio groups.\n' "$USER" >&2
     fi
@@ -131,6 +139,20 @@ if [[ ! -f /etc/udev/rules.d/99-gpio.rules ]]; then
     echo 'SUBSYSTEM=="bcm2835-gpiomem", GROUP="gpio", MODE="0660"' | sudo tee /etc/udev/rules.d/99-gpio.rules >/dev/null
     sudo udevadm control --reload-rules 2>/dev/null || true
 fi
+
+printf 'Installing Amarelli startup service...\n'
+sudo install -m 0644 "$PROJECT_DIR/systemd/amarelli.service" "$SYSTEMD_DIR/amarelli.service"
+sudo install -m 0440 "$PROJECT_DIR/systemd/amarelli-sdcard.sudoers" "$SUDOERS_DIR/amarelli-sdcard"
+# 2026-09-08: watchdog hardware NON installato. Il BCM2835 esprime al massimo
+# ~16s di timeout, mentre la conf ne chiedeva 20; con RuntimeWatchdogSec attivo
+# la board si resettava a freddo durante le fasi di forte I/O in boot.
+# Per riabilitarlo, usare un valore sotto il limite hardware (es. 10s).
+# sudo install -D -m 0644 "$PROJECT_DIR/systemd/amarelli-watchdog.conf" /etc/systemd/system.conf.d/amarelli-watchdog.conf
+sudo install -m 0644 "$PROJECT_DIR/systemd/80-amarelli-usb-storage.rules" /etc/udev/rules.d/80-amarelli-usb-storage.rules
+sudo visudo -cf "$SUDOERS_DIR/amarelli-sdcard"
+sudo udevadm control --reload-rules
+sudo systemctl daemon-reload
+sudo systemctl enable amarelli.service
 
 printf '\nInstallation complete. Reboot the Raspberry Pi to activate SPI and the SD-card reader.\n'
 printf 'Run the application with: .venv/bin/python software/main.py\n'

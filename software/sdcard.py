@@ -10,10 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 class SdCard:
-    def __init__(self, mount_path: str | Path, mock: bool = False):
+    def __init__(self, mount_path: str | Path, mock: bool = False, mount_enabled: bool = True):
         self.mount_path = Path(mount_path)
         self._device = None
         self._mock = bool(mock)
+        self._mount_enabled = bool(mount_enabled)
 
     def _refresh_mock(self) -> bool:
         if not self.mount_path.is_dir():
@@ -28,9 +29,16 @@ class SdCard:
         self._device = "mock"
         return True
 
+    def is_present(self) -> bool:
+        """Device presente (sda/mmcblk) indipendentemente dal mount - per UI 'SD available' in manuale."""
+        if self._mock or not self._mount_enabled:
+            return self._refresh_mock()
+        device = self._find_device()
+        return device is not None and Path(device).exists()
+
     def is_available(self) -> bool:
-        """Lightweight detect: non monta, verifica solo presenza/leggibilità."""
-        if self._mock:
+        """Lightweight detect: verifica se montato e leggibile (usato per creare Cache)."""
+        if self._mock or not self._mount_enabled:
             return self._refresh_mock()
         device = self._find_device()
         if device is None or not Path(device).exists():
@@ -49,7 +57,7 @@ class SdCard:
 
     def try_mount(self) -> bool:
         """Tenta mount RO se necessario. Ritorna True se dopo la chiamata la SD è disponibile."""
-        if self._mock:
+        if self._mock or not self._mount_enabled:
             return self._refresh_mock()
         device = self._find_device()
         if device is None or not Path(device).exists():
@@ -72,7 +80,8 @@ class SdCard:
                     capture_output=True,
                     text=True,
                 )
-                logger.info("Mounted SD card %s at %s", device, self.mount_path)
+                kind = "USB" if self._is_usb_device(device) else "SD card"
+                logger.info("Mounted %s %s at %s", kind, device, self.mount_path)
             except subprocess.CalledProcessError as error:
                 logger.warning("Cannot mount SD card %s: %s", device, error.stderr.strip())
                 return False
@@ -94,7 +103,7 @@ class SdCard:
         return self.try_mount()
 
     def close(self) -> None:
-        if self._mock:
+        if self._mock or not self._mount_enabled:
             self._device = None
             return
         if os.path.ismount(self.mount_path):
@@ -112,7 +121,22 @@ class SdCard:
             time.sleep(0.1)
 
     @staticmethod
+    def _collect_all_devices(blockdevices) -> list[dict]:
+        """Raccoglie ricorsivamente tutti i device da lsblk JSON (gestisce 'children')."""
+        out: list[dict] = []
+        stack = list(blockdevices)
+        while stack:
+            dev = stack.pop()
+            out.append(dev)
+            children = dev.get("children")
+            if isinstance(children, list):
+                stack.extend(children)
+        return out
+
+    @staticmethod
     def _find_device() -> str | None:
+        """Cerca in ordine: 1) SD SPI (mmcblk1+), 2) USB su microUSB (sdX).
+        Ritorna il path del device (partizione se presente, altrimenti disk)."""
         try:
             result = subprocess.run(
                 ["lsblk", "--json", "--output", "PATH,TYPE"],
@@ -125,7 +149,10 @@ class SdCard:
             logger.warning("Cannot detect SD card: %s", error)
             return None
 
-        for device in devices:
+        all_devs = SdCard._collect_all_devices(devices)
+
+        # 1) SD su SPI (mmcblk1+, esclude mmcblk0 che è la SD di sistema)
+        for device in all_devs:
             path = device.get("path", "")
             name = Path(path).name
             if (
@@ -134,9 +161,26 @@ class SdCard:
             ):
                 return path
 
-        for device in devices:
+        for device in all_devs:
             path = device.get("path", "")
             name = Path(path).name
             if device.get("type") == "disk" and re.fullmatch(r"mmcblk[1-9]\d*", name):
                 return path
+
+        # 2) Fallback USB su porta microUSB (sda, sdb, ...). Priorità a partizione.
+        for device in all_devs:
+            path = device.get("path", "")
+            name = Path(path).name
+            if device.get("type") == "part" and re.fullmatch(r"sd[a-z]+\d+", name):
+                return path
+
+        for device in all_devs:
+            path = device.get("path", "")
+            name = Path(path).name
+            if device.get("type") == "disk" and re.fullmatch(r"sd[a-z]+", name):
+                return path
         return None
+
+    @staticmethod
+    def _is_usb_device(path: str) -> bool:
+        return bool(re.fullmatch(r"/dev/sd[a-z]+\d*", path))

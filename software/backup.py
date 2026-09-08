@@ -47,6 +47,10 @@ class Backup:
         self._resume_state = State.IDLE
         self._cancel = threading.Event()
         self._bus.on("config:set", self._on_config_set)
+        if self._cache is not None:
+            self._cache._cancel = self._cancel
+        if self._uploader is not None:
+            self._uploader._cancel = self._cancel
 
     @property
     def state(self) -> State:
@@ -77,16 +81,22 @@ class Backup:
 
     def set_cache(self, cache) -> None:
         self._cache = cache
+        if cache is not None:
+            cache._cancel = self._cancel
 
     def set_uploader(self, uploader) -> None:
         """Sostituisce il backend di upload; se un backup e' in corso il
         cambio viene applicato al backup successivo."""
         if self.is_active or self._state in (State.PAUSED, State.RETRYING):
             self._next_uploader = uploader
+            if uploader is not None:
+                uploader._cancel = self._cancel
             logger.info("Upload backend will change on the next backup")
             return
         self._uploader = uploader
         self._next_uploader = None
+        if uploader is not None:
+            uploader._cancel = self._cancel
 
     def _on_config_set(self, key, value, **kw):
         if key == "mode":
@@ -104,6 +114,9 @@ class Backup:
         if not self.is_active and self._state != State.RETRYING:
             return False
         self._cancel.set()
+        # feedback immediato su display/LED senza aspettare fine file
+        self._set_state(State.PAUSED)
+        logger.info("Backup paused by user")
         return True
 
     def resume(self) -> bool:

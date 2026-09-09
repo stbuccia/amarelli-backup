@@ -1,21 +1,19 @@
-Obbligatorio:
-LED
-Reed Switch
-Gestire sd dalla usb
-
-
 Test:
+
+Rendi l'installer e l'applicazione indipendente dal nome utente
+Finire documentazione
+Stampare e assemblare
+Togliere watchdog
+Impostare la fake-sd dal menu
+Finire test 
 Testare per fare tutto automaticamente / manualmente
 Testare altra parte della scheda sd
-Testare wifi
+Testare pagina web
 
 Infine:
-Rispolverare codice
+Refactor del codice codice
 
 Se si riesce:
-Sarebbe bello capire quanti ce ne sono da cachare
-Se si interrompe la foto rimane a metà
-Oltre la barra sarebbe bello mettere anche numero file / numero file totale
 Barra che si aggiorna con un partial refresh 
 Sistemare un minimo la UI della schermata principale
 Storico statistiche?

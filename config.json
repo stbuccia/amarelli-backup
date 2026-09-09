@@ -1,10 +1,10 @@
 {
     "sd_src": "/mnt/amarelli-sd",
-    "cache_path": "/home/raspberry/amarelli/cache",
+    "cache_path": "~/amarelli/cache",
     "cloud_dst": "/tmp_1780590894_1780690013_1787774868",
     "prune_min_days": null,
-    "log_path": "/home/raspberry/amarelli/amarelli.log",
-    "db_path": "/home/raspberry/amarelli/files.db",
+    "log_path": "~/amarelli/amarelli.log",
+    "db_path": "~/amarelli/files.db",
     "prune_policy": 30,
     "mode": "upload",
     "file_filter": "jpg",

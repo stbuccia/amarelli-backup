@@ -23,15 +23,6 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-picdir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "pic"
-)
-libdir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"
-)
-if os.path.exists(libdir):
-    sys.path.append(libdir)
-
 if args.mock:
     class EPD:
         """Software-only EPD implementation used by the interactive mock."""
@@ -288,16 +279,6 @@ def run_interactive(epd):
 
 
 def _handle_mock_keys(ch, sb, display, current_view, legend):
-    if ch == "b":
-        sb.set_battery(sb._battery - 10)
-        logger.info("Battery: %d%%", sb._battery)
-        display.render_full(current_view, sb, legend)
-        return True
-    if ch == "B":
-        sb.set_battery(sb._battery + 10)
-        logger.info("Battery: %d%%", sb._battery)
-        display.render_full(current_view, sb, legend)
-        return True
     if ch == "i":
         sb.set_wifi(not sb._wifi)
         logger.info("WiFi: %s", "connected" if sb._wifi else "disconnected")
@@ -339,7 +320,6 @@ def _loop(
             return
         leg = legend._text
         title = sb._title
-        bat = sb._battery
         wifi_s = "ON" if getattr(sb, "_wifi", True) else "OFF"
         if active_view[0] is status_view:
             bv = status_view
@@ -356,7 +336,7 @@ def _loop(
                 stats_s = ""
             err_s = f" err:{bv._error_msg}" if getattr(bv, "_error_msg", "") else ""
             print(
-                f"[DISPLAY] BACKUP | {title} | {bv.status} ({state_name}) | wifi:{wifi_s} sd:{sd_s} bat:{bat}% | cached:{bv.cached_count} pend:{bv.pending_upload} up:{bv.uploaded_count}{bar}{cur}{stats_s}{err_s} | legend:{leg}"
+                f"[DISPLAY] BACKUP | {title} | {bv.status} ({state_name}) | wifi:{wifi_s} sd:{sd_s} | cached:{bv.cached_count} pend:{bv.pending_upload} up:{bv.uploaded_count}{bar}{cur}{stats_s}{err_s} | legend:{leg}"
             )
         elif active_view[0] is menu_view:
             sel = menu.current_label
@@ -366,7 +346,7 @@ def _loop(
                 f"{'>' if i == idx else ' '}{it.label}" for i, it in enumerate(menu._items)
             )
             print(
-                f"[DISPLAY] MENU | {title} | sel:{sel} ({idx+1}/{total}) | wifi:{wifi_s} bat:{bat}% | legend:{leg} | {items_preview}"
+                f"[DISPLAY] MENU | {title} | sel:{sel} ({idx+1}/{total}) | wifi:{wifi_s} | legend:{leg} | {items_preview}"
             )
         else:
             print(f"[DISPLAY] {title} | legend:{leg}")
@@ -531,7 +511,7 @@ def _loop(
 
     print("Amarelli interactive. \u25c0 back, \u25b6 action")
     if mock:
-        print("          b B battery  i wifi  t title  (mock)")
+        print("          i wifi  t title  (mock)")
 
     while True:
         if reed is not None:

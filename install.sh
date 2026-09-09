@@ -79,17 +79,15 @@ sudo chown "$USER":"$USER" /mnt/amarelli-sd
 
 printf 'Preparing persistent application data directory...\n'
 mkdir -p "$HOME/amarelli/cache"
-if [[ -f $PROJECT_DIR/files.db && ! -f $HOME/amarelli/files.db ]]; then
-    cp "$PROJECT_DIR/files.db" "$HOME/amarelli/files.db"
-    printf 'Migrated existing database to %s\n' "$HOME/amarelli/files.db"
-fi
 
 printf 'Installing Python dependencies in %s...\n' "$VENV_DIR"
 if [[ ! -d $VENV_DIR ]]; then
     python3 -m venv "$VENV_DIR"
 fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install '.[raspberry-pi]'
+# Editable install: le dipendenze finiscono nel virtualenv ma il codice resta
+# quello di software/, senza copie duplicate in site-packages ne' cartella build/.
+"$VENV_DIR/bin/python" -m pip install -e "$PROJECT_DIR[raspberry-pi]"
 
 if [[ ! -d $PROJECT_DIR/software/waveshare_epd ]]; then
     printf 'Installing Waveshare e-paper library...\n'

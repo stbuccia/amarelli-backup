@@ -5,10 +5,11 @@ __pycache__/
 *.egg-info/
 
 # Runtime files
-amarelli.egg-info/
 amarelli.log
 files.db
-pic/
 
-# Local Waveshare dependency copied during device setup
-software/waveshare_epd/
+# Artefatti di build di setuptools
+build/
+
+# Local Waveshare dependency: scaricata da install.sh, non versionata
+waveshare_epd/

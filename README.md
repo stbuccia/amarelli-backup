@@ -22,7 +22,7 @@ Progetto DIY che consiste nel trasformare una scatola di liquerizia Amarelli in 
 + Python 3.10 o successivo
 ...
 
-+ Esegui `./install.sh` dalla root del repository. Lo script abilita SPI, installa le dipendenze e copia il driver Waveshare nel virtualenv.
++ Esegui `./install.sh` dalla root del repository. Lo script abilita SPI, installa le dipendenze, scarica la libreria Waveshare e-Paper (non e' versionata nel repository) in `software/waveshare_epd/` e la copia nel virtualenv.
 + Riavvia la Raspberry Pi dopo l'installazione, per applicare la configurazione SPI e i permessi dei gruppi.
 + Avvia l'applicazione con `.venv/bin/python software/main.py`.
 
@@ -189,14 +189,20 @@ I dati persistenti dell'applicazione si trovano in `/home/raspberry/amarelli`: `
 
 L'overlay SPI del lettore SD usa 10 MHz. Dopo aver aggiornato `install.sh`, rieseguire `./install.sh` e riavviare la Raspberry Pi per applicare la velocita' aggiornata.
 
+Per montare, smontare o diagnosticare la SD a mano (l'applicazione lo fa da sola):
+
+```bash
+software/tests/hardware/mount-sdcard.sh status   # anche mount / umount
+```
+
 
 ...
 + `nmcli connection delete "Amarelli AP"`
 
 ## Assemblaggio
 
-+ Prima max17043, sdi spi, led, reed switch
-+ raspberry, powerboost
++ Prima sd spi, led, reed switch
++ raspberry
 + eink spi
 
 ## Display Waveshare e-Paper
@@ -216,7 +222,7 @@ Il display Waveshare e-Paper e' collegato tramite il bus SPI0 del Raspberry Pi.
 
 Il segnale `RST` e' stato spostato dal GPIO BCM 17 al GPIO BCM 27, perche' GPIO 17 non e' disponibile nel progetto.
 
-Nel driver Python Waveshare, il file `waveshare_epd/epdconfig.py` deve contenere:
+La libreria Waveshare non e' versionata nel repository: `install.sh` la scarica da GitHub in `software/waveshare_epd/` (ignorata da git), applica la patch del pin RST e la copia nel virtualenv. Nel driver, il file `software/waveshare_epd/epdconfig.py` deve contenere:
 
 ```python
 RST_PIN = 27
@@ -237,8 +243,10 @@ RST: 27
 Per visualizzare una schermata di test sul pannello 2.13" V4:
 
 ```bash
-.venv/bin/python software/tests/hardware/test_eink.py
+.venv/bin/python software/tests/hardware/test_display.py
 ```
+
+Lo script verifica il pin RST, poi scrive "Hello world" passando dallo stack UI dell'applicazione (`Display`, `StatusBar`, `Legend`, font): controlla quindi driver, pin, font e composizione dell'immagine.
 
 SPI deve essere abilitato sul Raspberry Pi. Verificare la presenza di entrambi i chip-select con:
 ```bash

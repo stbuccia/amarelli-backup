@@ -486,7 +486,12 @@ if (err) msg.innerHTML = '<div class="flash flash-error">' + err + '</div>';
     @app.route("/logs")
     def logs():
         try:
-            with open("amarelli.log") as f:
+            with open(Path(__file__).resolve().parent.parent / "config.json") as f:
+                log_path = json.load(f).get("log_path", "")
+        except Exception:
+            log_path = ""
+        try:
+            with open(log_path) as f:
                 lines = f.readlines()
         except Exception:
             lines = ["(no log file)"]

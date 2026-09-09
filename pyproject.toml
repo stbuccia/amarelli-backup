@@ -13,7 +13,7 @@ dependencies = [
     "nmcli",
     "flask",
     "gpiozero",
-    "Pillow",
+    "Pillow>=10.1",
 ]
 
 [project.optional-dependencies]

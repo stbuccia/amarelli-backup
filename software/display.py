@@ -1,12 +1,9 @@
-import sys
-import os
 import logging
 from PIL import Image, ImageDraw, ImageFont
 from contextlib import nullcontext
 
 from backup import State
 
-BATTERY_SIZE = 16
 ICON_SIZE = 7
 
 
@@ -46,20 +43,6 @@ _ICON_DISPATCH = {
 }
 
 
-def _draw_icon_battery(draw, x, y, size, fill, percent=100):
-    bw, bh = size * 7 // 10, size * 6 // 10
-    bx = x + (size - bw) // 2
-    by = y + (size - bh) // 2
-    draw.rectangle([(bx, by), (bx + bw - 1, by + bh - 1)], outline=fill, fill=None)
-    nw = max(1, size // 10)
-    nh = max(1, bh // 3)
-    draw.rectangle([(bx + bw, by + nh), (bx + bw + nw - 1, by + bh - nh - 1)], fill=fill)
-    iw = bw - 2
-    fw = max(0, min(iw, round(iw * percent / 100)))
-    if fw > 0:
-        draw.rectangle([(bx + 1, by + 1), (bx + fw, by + bh - 2)], fill=fill)
-
-
 def _render_icons_in_text(draw, x, y, text, font, fill=0):
     _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
     ox = x
@@ -79,14 +62,6 @@ def _render_icons_in_text(draw, x, y, text, font, fill=0):
     if buf:
         draw.text((ox, y), buf, font=font, fill=fill)
 
-picdir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "pic"
-)
-libdir = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"
-)
-if os.path.exists(libdir):
-    sys.path.append(libdir)
 
 logger = logging.getLogger(__name__)
 
@@ -96,14 +71,10 @@ class StatusBar:
 
     def __init__(self, title="Amarelli"):
         self._title = title
-        self._battery = 87
         self._wifi = True
 
     def set_title(self, title: str):
         self._title = title
-
-    def set_battery(self, percent: int):
-        self._battery = max(0, min(100, int(percent)))
 
     def set_wifi(self, connected: bool):
         self._wifi = connected
@@ -116,15 +87,6 @@ class StatusBar:
         text_y = y + (self.HEIGHT - th) // 2
 
         draw.text((4, text_y), self._title, font=font, fill=0)
-
-        bat = f"{self._battery}%"
-        _, _, bw, _ = draw.textbbox((0, 0), bat, font=font)
-        bx = width - bw - 4
-        draw.text((bx, text_y), bat, font=font, fill=0)
-
-        ix = bx - 2 - BATTERY_SIZE
-        iy = text_y + (th - BATTERY_SIZE) // 2
-        _draw_icon_battery(draw, ix, iy, BATTERY_SIZE, 0, self._battery)
 
         draw.line([(2, y + self.HEIGHT - 1), (width - 2, y + self.HEIGHT - 1)], fill=0)
 
@@ -615,11 +577,9 @@ def setup_ui_handlers(
         status_view.refresh()
         display.render_full(active_view[0], status_bar, legend)
 
-    def on_statusbar_update(title=None, battery=None, wifi=None, **kw):
+    def on_statusbar_update(title=None, wifi=None, **kw):
         if title is not None:
             status_bar.set_title(title)
-        if battery is not None:
-            status_bar.set_battery(battery)
         if wifi is not None:
             status_bar.set_wifi(wifi)
             for v in active_view:
@@ -639,14 +599,5 @@ def setup_ui_handlers(
 
 
 def load_font(size=15):
-    font_path = os.path.join(picdir, "Font.ttc")
-    if os.path.exists(font_path):
-        return ImageFont.truetype(font_path, size)
-    for path in [
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    ]:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
-    logger.warning("No font found, using default")
-    return ImageFont.load_default()
+    """Font di default di Pillow, scalato alla dimensione richiesta."""
+    return ImageFont.load_default(size)

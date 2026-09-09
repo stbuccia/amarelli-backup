@@ -14,15 +14,6 @@
 + RST 	27 	Pin 13
 + BUSY 	24 	Pin 18 
 
-# TPS
-
-+ VCC (+ della batteria)
-+ GND (- della batteria)
-+ 5V (Pin 2)
-
-Raspberry 
-+ GND (- della batteria)
-
 # LED
 
 + 5V (3.3V della raspberry)

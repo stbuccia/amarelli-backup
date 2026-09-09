@@ -502,14 +502,18 @@ class UploaderBackendTests(unittest.TestCase):
 
     def test_uploader_switch_is_deferred_while_backup_is_active(self):
         from backup import State
+        from types import SimpleNamespace
 
-        backup = Backup(None, "old", None, bus=EventBus())
+        # Backup propaga il proprio evento di cancel all'uploader, quindi lo
+        # stub deve accettare l'assegnazione di attributi.
+        old, new = SimpleNamespace(), SimpleNamespace()
+        backup = Backup(None, old, None, bus=EventBus())
         backup._state = State.UPLOADING
 
-        backup.set_uploader("new")
+        backup.set_uploader(new)
 
-        self.assertEqual(backup._uploader, "old")
-        self.assertEqual(backup._next_uploader, "new")
+        self.assertIs(backup._uploader, old)
+        self.assertIs(backup._next_uploader, new)
 
 
 if __name__ == "__main__":

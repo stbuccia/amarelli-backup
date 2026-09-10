@@ -32,4 +32,4 @@ All these object I had already, so the are not buyed
 - Glue
 - 3d printed models
 
-When you have the parts, go to [Wiring and assembly](02-wiring-and-assembly.md).
+When you have the parts, go to [Wiring](02-wiring.md).

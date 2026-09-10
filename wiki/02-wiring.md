@@ -17,14 +17,14 @@ In this guide I use board row and column coordinates in order to give you precis
 
 After wiring you should look something like:
 
-![Top view](assets/images/wiring/top.JPG)
-*Top view: with all parts soldered*
+![Front view](assets/images/wiring/front.JPG)
+*Front view: the top part of the Raspberry and the Screen, must coincide with the top border of the board*
 
 ![Back view](assets/images/wiring/back.JPG)
 *Back view: the Pi fixed on the back face of the board.*
 
-![Front view](assets/images/wiring/front.JPG)
-*Front view: the top part of the Raspberry and the Screen, must coincide with the top border of the board*
+![Top view](assets/images/wiring/top.JPG)
+*Top view: with all parts soldered*
 
 ## Raspberry Pi
 

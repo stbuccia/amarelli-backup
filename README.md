@@ -16,7 +16,7 @@ This project was made for the [Laboratorio di Making](https://www.unibo.it/it/st
 
 ## How it works
 
-You put your camera microSD card in the box and it backups your photo copying them locally, and then uploading in your favorite cloud storage (WebDav Server ory any place with rclone supports like Dropbox, Google Drive and over 70 more cloud storages). E-ink screen show you the progress, four buttons allow you to interact and a LED show the status with the colour. This device is mostly inteded for travels, since usually you don't have a device with you to use for backup 
+You put your camera microSD card in the box and it backups your photo copying them locally, and then uploading in your favorite cloud storage (WebDav Server ory any place with rclone supports like Dropbox, Google Drive and over 70 more cloud storages). E-ink screen show you the progress, four buttons allow you to interact and a LED show the status with the colour.  
 
 You can check bu yourself in this demo video:
 

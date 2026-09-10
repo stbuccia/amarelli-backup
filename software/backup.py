@@ -33,7 +33,9 @@ _TIMESTAMP_SUFFIX = re.compile(r"_\d+$")
 
 
 class Backup:
-    def __init__(self, cache, uploader, db, bus=None, max_retries=3, retry_delay=5, mode="upload"):
+    def __init__(
+        self, cache, uploader, db, bus=None, max_retries=3, retry_delay=5, mode="upload"
+    ):
         self._cache = cache
         self._uploader = uploader
         self._next_uploader = None
@@ -58,20 +60,32 @@ class Backup:
 
     @property
     def is_active(self) -> bool:
-        return self._state in (State.CACHING, State.UPLOADING, State.REMOTE_CLEANUP, State.PRUNING)
+        return self._state in (
+            State.CACHING,
+            State.UPLOADING,
+            State.REMOTE_CLEANUP,
+            State.PRUNING,
+        )
 
     def start(self) -> bool:
         if self._state != State.IDLE:
             logger.info("Backup start ignored: state=%s", self._state.name)
             return False
+
         pending = self._db.count_pending_uploads()
+
         if self._cache is None and pending == 0:
-            logger.info("Backup start ignored: no cache and no pending uploads (pending=%s)", pending)
+            logger.info(
+                "Backup start ignored: no cache and no pending uploads (pending=%s)",
+                pending,
+            )
             return False
         self._mode = self._next_mode
+
         if self._next_uploader is not None:
             self._uploader = self._next_uploader
             self._next_uploader = None
+
         if self._cache:
             self._cache.prepare_backup()
         self._cancel.clear()
@@ -85,8 +99,7 @@ class Backup:
             cache._cancel = self._cancel
 
     def set_uploader(self, uploader) -> None:
-        """Sostituisce il backend di upload; se un backup e' in corso il
-        cambio viene applicato al backup successivo."""
+        # Se un backup è in corso, il cambio scatta al backup successivo.
         if self.is_active or self._state in (State.PAUSED, State.RETRYING):
             self._next_uploader = uploader
             if uploader is not None:
@@ -114,7 +127,6 @@ class Backup:
         if not self.is_active and self._state != State.RETRYING:
             return False
         self._cancel.set()
-        # feedback immediato su display/LED senza aspettare fine file
         self._set_state(State.PAUSED)
         logger.info("Backup paused by user")
         return True
@@ -145,15 +157,70 @@ class Backup:
         try:
             if state == State.CACHING:
                 return self._cache.count_uncached() if self._cache else 0
-            elif state == State.UPLOADING:
+            if state == State.UPLOADING:
                 return self._db.count_pending_uploads()
-            elif state == State.REMOTE_CLEANUP:
+            if state == State.REMOTE_CLEANUP:
                 return len(self._db.find_marked_for_deletion())
-            elif state == State.PRUNING:
+            if state == State.PRUNING:
                 return len(self._db.find_uploaded_not_pruned())
         except Exception:
             return 0
         return 0
+
+    @staticmethod
+    def _collect_stats(state, obj, stats):
+        if state == State.CACHING:
+            s = getattr(obj, "last_copy_stats", {})
+            stats["cached_ok"] = s.get("ok", 0)
+            stats["cached_failed"] = s.get("failed", 0)
+        elif state == State.UPLOADING:
+            s = getattr(obj, "last_upload_stats", {})
+            stats["uploaded_ok"] = s.get("ok", 0)
+            stats["uploaded_failed"] = s.get("failed", 0)
+        elif state == State.REMOTE_CLEANUP:
+            stats["remote_deleted"] = getattr(obj, "last_cleanup_stats", {}).get(
+                "ok", 0
+            )
+        elif state == State.PRUNING:
+            stats["pruned"] = getattr(obj, "last_prune_stats", {}).get("ok", 0)
+
+    def _skip_phase(self, state) -> bool:
+        if self._mode == "upload" and state == State.REMOTE_CLEANUP:
+            return True
+        if self._mode == "mirror" and state == State.PRUNING:
+            return True
+        return False
+
+    def _run_phase(self, state, obj, method_name, stats) -> bool:
+        """Esegue una fase con retry+backoff. Ritorna True se l'utente ha messo in pausa."""
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                logger.info("Starting phase %s (%s)", state.name, method_name)
+                getattr(obj, method_name)()
+                logger.info("Completed phase %s", state.name)
+                self._collect_stats(state, obj, stats)
+                return False
+            except TransientError as e:
+                self._collect_stats(state, obj, stats)
+                if attempt >= self._max_retries:
+                    raise
+                wait = self._retry_delay * (2 ** (attempt - 1))
+                logger.warning(
+                    "%s transient error (attempt %d/%d), retry in %.1fs: %s",
+                    state.name,
+                    attempt,
+                    self._max_retries,
+                    wait,
+                    e,
+                )
+                self._set_state(State.RETRYING)
+                if self._wait_with_cancel(wait):
+                    return True
+                self._set_state(state)
+            except PermanentError:
+                self._collect_stats(state, obj, stats)
+                raise
+        return False
 
     def _run(self):
         stats = {
@@ -165,23 +232,14 @@ class Backup:
             "pruned": 0,
         }
         try:
-            if self._state == State.PAUSED:
-                target = self._resume_state
-            else:
-                target = self._state
-
-            phase_idx = 0
-            for i, (state, _, _) in enumerate(_PHASES):
-                if state == target:
-                    phase_idx = i
-                    break
+            target = self._resume_state if self._state == State.PAUSED else self._state
+            phase_idx = next(
+                (i for i, (state, _, _) in enumerate(_PHASES) if state == target), 0
+            )
 
             for state, obj_attr, method_name in _PHASES[phase_idx:]:
-                if self._mode == "upload" and state == State.REMOTE_CLEANUP:
+                if self._skip_phase(state):
                     continue
-                if self._mode == "mirror" and state == State.PRUNING:
-                    continue
-
                 obj = getattr(self, obj_attr)
                 if obj is None:
                     continue
@@ -191,59 +249,8 @@ class Backup:
                     self._set_state(State.PAUSED)
                     return
 
-                for attempt in range(1, self._max_retries + 1):
-                    try:
-                        logger.info("Starting phase %s (%s)", state.name, method_name)
-                        getattr(obj, method_name)()
-                        logger.info("Completed phase %s", state.name)
-                        # collect stats on success
-                        if state == State.CACHING:
-                            s = getattr(obj, "last_copy_stats", {})
-                            stats["cached_ok"] = s.get("ok", 0)
-                            stats["cached_failed"] = s.get("failed", 0)
-                        elif state == State.UPLOADING:
-                            s = getattr(obj, "last_upload_stats", {})
-                            stats["uploaded_ok"] = s.get("ok", 0)
-                            stats["uploaded_failed"] = s.get("failed", 0)
-                        elif state == State.REMOTE_CLEANUP:
-                            s = getattr(obj, "last_cleanup_stats", {})
-                            stats["remote_deleted"] = s.get("ok", 0)
-                        elif state == State.PRUNING:
-                            s = getattr(obj, "last_prune_stats", {})
-                            stats["pruned"] = s.get("ok", 0)
-                        break
-                    except TransientError as e:
-                        # capture partial stats before retry
-                        if state == State.CACHING:
-                            s = getattr(obj, "last_copy_stats", {})
-                            stats["cached_ok"] = s.get("ok", 0)
-                            stats["cached_failed"] = s.get("failed", 0)
-                        elif state == State.UPLOADING:
-                            s = getattr(obj, "last_upload_stats", {})
-                            stats["uploaded_ok"] = s.get("ok", 0)
-                            stats["uploaded_failed"] = s.get("failed", 0)
-                        if attempt < self._max_retries:
-                            wait = self._retry_delay * (2 ** (attempt - 1))
-                            logger.warning(
-                                "%s transient error (attempt %d/%d), retry in %.1fs: %s",
-                                state.name,
-                                attempt,
-                                self._max_retries,
-                                wait,
-                                e,
-                            )
-                            self._set_state(State.RETRYING)
-                            if self._wait_with_cancel(wait):
-                                return
-                            self._set_state(state)
-                        else:
-                            raise
-                    except PermanentError:
-                        if state == State.UPLOADING:
-                            s = getattr(obj, "last_upload_stats", {})
-                            stats["uploaded_ok"] = s.get("ok", 0)
-                            stats["uploaded_failed"] = s.get("failed", 0)
-                        raise
+                if self._run_phase(state, obj, method_name, stats):
+                    return
 
                 if self._cancel.is_set():
                     self._set_state(State.PAUSED)
@@ -255,32 +262,18 @@ class Backup:
                     and self._cache is not None
                     and self._uploader is not None
                 ):
-                    self._db.mark_deleted_files(
-                        self._cache.last_seen_paths,
-                        self._uploader.cloud_dst,
-                    )
+                    self._reconcile_mirror()
 
-                    prefix = self._uploader.cloud_dst
-                    total = self._db.count_uploaded_for_prefix(prefix)
-                    marked = self._db.count_marked_for_deletion(prefix)
-                    if total > 0 and marked >= total:
-                        logger.warning(
-                            "Redirect: tutti i %d file remoti cancellati, cambio destinazione",
-                            total,
-                        )
-                        self._db.clear_deletion_marks_for_prefix(prefix)
-                        new_dst = self._new_cloud_destination(prefix, int(time.time()))
-                        self._uploader.cloud_dst = new_dst
-                        self._bus.emit("config:set", key="cloud_dst", value=new_dst)
-                        logger.info("Nuova destinazione remota: %s", new_dst)
-
-            up_to_date = (
-                stats["cached_ok"] == 0
-                and stats["uploaded_ok"] == 0
-                and stats["cached_failed"] == 0
-                and stats["uploaded_failed"] == 0
-                and stats["remote_deleted"] == 0
-                and stats["pruned"] == 0
+            up_to_date = not any(
+                stats[k]
+                for k in (
+                    "cached_ok",
+                    "uploaded_ok",
+                    "cached_failed",
+                    "uploaded_failed",
+                    "remote_deleted",
+                    "pruned",
+                )
             )
             self._set_state(State.COMPLETED, stats=stats, up_to_date=up_to_date)
 
@@ -290,6 +283,25 @@ class Backup:
         except Exception as e:
             logger.exception("Unexpected backup error")
             self._set_state(State.ERROR, stats=stats, error=str(e)[:60])
+
+    def _reconcile_mirror(self):
+        self._db.mark_deleted_files(
+            self._cache.last_seen_paths, self._uploader.cloud_dst
+        )
+
+        prefix = self._uploader.cloud_dst
+        total = self._db.count_uploaded_for_prefix(prefix)
+        marked = self._db.count_marked_for_deletion(prefix)
+        if total > 0 and marked >= total:
+            logger.warning(
+                "Redirect: tutti i %d file remoti cancellati, cambio destinazione",
+                total,
+            )
+            self._db.clear_deletion_marks_for_prefix(prefix)
+            new_dst = self._new_cloud_destination(prefix, int(time.time()))
+            self._uploader.cloud_dst = new_dst
+            self._bus.emit("config:set", key="cloud_dst", value=new_dst)
+            logger.info("Nuova destinazione remota: %s", new_dst)
 
     def handle_key_event(self, key):
         if key in ("RIGHT", "d", "\r", "\n"):

@@ -1,14 +1,17 @@
 {
-    "sd_src": "/mnt/amarelli-sd",
-    "cache_path": "~/amarelli/cache",
+    "sd_src": "/mnt/liquorice-sd",
+    "cache_path": "~/liquorice/cache",
     "cloud_dst": "/tmp_1780590894_1780690013_1787774868",
     "prune_min_days": null,
-    "log_path": "~/amarelli/amarelli.log",
-    "db_path": "~/amarelli/files.db",
+    "log_path": "~/liquorice/liquorice.log",
+    "db_path": "~/liquorice/files.db",
     "prune_policy": 30,
     "mode": "upload",
     "file_filter": "jpg",
     "flask_host": "0.0.0.0",
     "flask_port": 5000,
-    "sd_mount": true
+    "sd_mount": true,
+    "fake_sd": true,
+    "fake_sd_path": "~/liquorice/fake-sd",
+    "operation_mode": "auto"
 }

@@ -8,8 +8,7 @@ ICON_SIZE = 7
 
 
 def _draw_icon_triangle(draw, x, y, size, fill, direction):
-    h = size
-    w = size
+    h = w = size
     if direction == "right":
         pts = [(x, y), (x, y + h - 1), (x + w - 1, y + h // 2)]
     elif direction == "left":
@@ -69,7 +68,7 @@ logger = logging.getLogger(__name__)
 class StatusBar:
     HEIGHT = 16
 
-    def __init__(self, title="Amarelli"):
+    def __init__(self, title="Liquorice"):
         self._title = title
         self._wifi = True
 
@@ -82,12 +81,8 @@ class StatusBar:
     def render(self, draw, font, width):
         y = 0
         draw.rectangle([(0, y), (width, y + self.HEIGHT)], fill=255)
-
         _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
-        text_y = y + (self.HEIGHT - th) // 2
-
-        draw.text((4, text_y), self._title, font=font, fill=0)
-
+        draw.text((4, y + (self.HEIGHT - th) // 2), self._title, font=font, fill=0)
         draw.line([(2, y + self.HEIGHT - 1), (width - 2, y + self.HEIGHT - 1)], fill=0)
 
 
@@ -116,26 +111,17 @@ class Legend:
 
 
 class LockView:
-    """Schermata di blocco dedicata per reed chiuso (sportello)."""
-
-    MARGIN_X = 4
     LINE_SPACING = 4
 
     def render(self, draw, font, width, height, y_offset=0, bottom_margin=0):
         draw.rectangle([(0, y_offset), (width, height)], fill=255)
-        _, _, _, th = draw.textbbox((0, 0), "Xg", font=font)
-        line_h = th + self.LINE_SPACING
-        # Icona lucchetto stilizzata centrata
         cx = width // 2
         cy = y_offset + (height - y_offset - bottom_margin) // 2 - 6
-        # corpo lucchetto
         bw, bh = 36, 22
         bx, by = cx - bw // 2, cy - 2
         draw.rectangle([(bx, by), (bx + bw, by + bh)], fill=255, outline=0, width=2)
         draw.rectangle([(bx + 12, by + 8), (bx + 24, by + 16)], fill=0)
-        # arco lucchetto
         draw.arc([(bx + 8, by - 12), (bx + 28, by + 10)], 180, 0, fill=0, width=2)
-        # Testo centrato sotto
         y = by + bh + 8
         text = "Schermo bloccato"
         tw = draw.textbbox((0, 0), text, font=font)[2]
@@ -157,9 +143,9 @@ class BackupStatusView:
         self.current_file = ""
         self._wifi = True
         self._sd_available = None
-        self._stats = None  # last run stats: {cached_ok, cached_failed, uploaded_ok, uploaded_failed, remote_deleted, pruned, up_to_date}
+        self._stats = None
         self._error_msg = ""
-        self._active_phase = None  # fase operativa per etichetta per-fase in Paused/Retrying
+        self._active_phase = None
         self._bus = bus
         if bus:
             bus.on("backup:state", self._on_backup_state)
@@ -191,8 +177,7 @@ class BackupStatusView:
         stats = kw.get("stats")
         error = kw.get("error", "")
         up_to_date = kw.get("up_to_date", False)
-        # Ricorda la fase operativa corrente (CACHING/UPLOADING/...) così
-        # PAUSED/RETRYING mostrano la stessa etichetta per-fase, senza x/tot.
+        # Ricorda la fase operativa per riusare l'etichetta in PAUSED/RETRYING.
         if state in (State.CACHING, State.UPLOADING, State.REMOTE_CLEANUP, State.PRUNING):
             self._active_phase = state
         elif state == State.IDLE:
@@ -303,27 +288,20 @@ class BackupStatusView:
             bar_y = y
             bar_h = max(4, th - 4)
             bar_w = width - 2 * x
-            # evita divisione per zero e preserva barra anche in Paused
             denom = self.progress_total if self.progress_total else 1
-            fill = max(
-                0, min(bar_w, int(bar_w * self.progress_current / denom))
-            )
-            draw.rectangle(
-                [(x, bar_y), (x + bar_w, bar_y + bar_h)], fill=255, outline=0
-            )
+            fill = max(0, min(bar_w, int(bar_w * self.progress_current / denom)))
+            draw.rectangle([(x, bar_y), (x + bar_w, bar_y + bar_h)], fill=255, outline=0)
             if fill > 1:
                 draw.rectangle(
                     [(x + 1, bar_y + 1), (x + fill - 1, bar_y + bar_h - 1)], fill=0
                 )
             y += bar_h + self.LINE_SPACING
 
-            # file corrente subito sotto la barra (anche in Paused)
             if self.current_file:
                 if y + line_h <= height - bottom_margin - 2:
                     draw.text((x, y), self.current_file[:30], font=font, fill=0)
                     y += line_h
 
-            # contatore per-fase sotto la barra (sostituisce i vecchi Cached / To upload)
             per_phase = None
             if self.status == "Caching files...":
                 per_phase = f"Cached: {self.progress_current}/{self.progress_total}"
@@ -334,28 +312,20 @@ class BackupStatusView:
             elif self.status == "Pruning cache...":
                 per_phase = f"Pruned: {self.progress_current}/{self.progress_total}"
             elif self.status in ("Retrying...", "Paused"):
-                # Pausa/retry mantengono la barra ma NON il conteggio x/tot:
-                # mostrano la stessa etichetta della fase operativa (Cached/Uploaded/...)
-                ap = self._active_phase
-                if ap == State.CACHING:
-                    per_phase = "Cached"
-                elif ap == State.UPLOADING:
-                    per_phase = "Uploaded"
-                elif ap == State.REMOTE_CLEANUP:
-                    per_phase = "Cleaned"
-                elif ap == State.PRUNING:
-                    per_phase = "Pruned"
-                else:
-                    per_phase = ""
+                # Pausa/retry mantengono la barra ma non il conteggio x/tot.
+                per_phase = {
+                    State.CACHING: "Cached",
+                    State.UPLOADING: "Uploaded",
+                    State.REMOTE_CLEANUP: "Cleaned",
+                    State.PRUNING: "Pruned",
+                }.get(self._active_phase, "")
 
             if per_phase and y + line_h <= height - bottom_margin - 2:
                 draw.text((x, y), per_phase, font=font, fill=0)
                 y += line_h
-            # per stati attivi non mostrare i vecchi contatori generici
             if self.status in ("Caching files...", "Uploading...", "Cleaning remote...", "Pruning cache...", "Retrying...", "Paused"):
                 return
 
-        # COMPLETED / ERROR / Already up to date -> show stats of last run
         if self.status in ("Done", "Error", "Already up to date") and self._stats is not None:
             s = self._stats
             if self.status == "Already up to date":
@@ -381,10 +351,10 @@ class BackupStatusView:
                     draw.text((x, y), f"Pruned: {s.get('pruned',0)}", font=font, fill=0)
                 return
             if self.status == "Error":
-                cf = s.get('cached_failed', 0)
-                co = s.get('cached_ok', 0)
-                uf = s.get('uploaded_failed', 0)
-                uo = s.get('uploaded_ok', 0)
+                co = s.get("cached_ok", 0)
+                cf = s.get("cached_failed", 0)
+                uo = s.get("uploaded_ok", 0)
+                uf = s.get("uploaded_failed", 0)
                 draw.text((x, y), f"Cached: {co} ok {cf} err", font=font, fill=0)
                 y += line_h
                 if y + line_h > height - bottom_margin - 2:
@@ -397,9 +367,6 @@ class BackupStatusView:
                 if y + line_h <= height - bottom_margin - 2 and self._error_msg:
                     draw.text((x, y), self._error_msg[:30], font=font, fill=0)
                 return
-
-        # IDLE / Ready: nessun contatore generico (richiesta utente: rimossi Cached / To upload)
-        # mostra solo stato WiFi/SD già sopra, nessun testo aggiuntivo
 
 
 class MenuView:
@@ -432,18 +399,13 @@ class MenuView:
             if y + line_h > height - bottom_margin - 2:
                 break
 
-            label_text = item.label
             icon_right = None
             icon_left = None
-
             if item.is_branch:
                 icon_right = "\u25b6"
             elif parent_config_key is not None and self._menu._config is not None:
                 current_val = self._menu._config.get(parent_config_key)
-                if current_val == item.value:
-                    icon_left = "\u25cf"
-                else:
-                    icon_left = "\u25cb"
+                icon_left = "\u25cf" if current_val == item.value else "\u25cb"
 
             if i == self._menu._selected:
                 draw.rectangle([(x, y), (width - x, y + line_h)], fill=0)
@@ -457,8 +419,8 @@ class MenuView:
                 _ICON_DISPATCH[icon_left](draw, cx, iy, ICON_SIZE, text_fill)
                 cx += ICON_SIZE + 2
 
-            draw.text((cx, y + 1), label_text, font=font, fill=text_fill)
-            _, _, lw, _ = draw.textbbox((0, 0), label_text, font=font)
+            draw.text((cx, y + 1), item.label, font=font, fill=text_fill)
+            _, _, lw, _ = draw.textbbox((0, 0), item.label, font=font)
             cx += lw
 
             if icon_right:
@@ -472,11 +434,10 @@ class Display:
     WIDTH = 250
     HEIGHT = 122
 
-    def __init__(self, epd, font, snapshot_path=None, io_lock=None):
+    def __init__(self, epd, font, io_lock=None):
         self._epd = epd
         self._font = font
         self._initialized = False
-        self.snapshot_path = snapshot_path
         self._io_lock = io_lock
         self._suspended = False
         self._last_frame = None
@@ -485,19 +446,21 @@ class Display:
     def font(self):
         return self._font
 
+    def _lock(self):
+        return self._io_lock or nullcontext()
+
     def init(self):
-        # Match the Waveshare V4 startup sequence before the first frame.
-        with self._io_lock or nullcontext():
+        with self._lock():
             self._epd.init()
             self._epd.Clear(0xFF)
 
     def init_full(self):
-        with self._io_lock or nullcontext():
+        with self._lock():
             self._epd.init()
             self._epd.Clear(0xFF)
 
     def sleep(self):
-        with self._io_lock or nullcontext():
+        with self._lock():
             if not self._suspended:
                 self._epd.sleep()
 
@@ -506,23 +469,21 @@ class Display:
         return self._suspended
 
     def suspend(self):
-        """Ferma l'hardware e-ink; i render successivi restano in memoria."""
-        with self._io_lock or nullcontext():
+        with self._lock():
             if self._suspended:
                 return
             self._epd.sleep()
             self._suspended = True
-        logger.info("Display sospeso: Coperchio chiuso")
+        logger.info("Display sospeso: coperchio chiuso")
 
     def resume(self):
-        """Riattiva l'e-ink senza ridisegnare il lock; il prossimo render_full aggiornerà lo stato corrente."""
-        with self._io_lock or nullcontext():
+        with self._lock():
             if not self._suspended:
                 return
             self._suspended = False
             self._epd.init()
             self._initialized = True
-        logger.info("Display riattivato: Coperchio aperto")
+        logger.info("Display riattivato: coperchio aperto")
 
     def _compose(self, content_view, status_bar, legend):
         img = Image.new("1", (self.WIDTH, self.HEIGHT), 255)
@@ -542,9 +503,7 @@ class Display:
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
         self._last_frame = img
-        if self.snapshot_path:
-            img.save(self.snapshot_path)
-        with self._io_lock or nullcontext():
+        with self._lock():
             if self._suspended:
                 return
             if not self._initialized:
@@ -572,7 +531,7 @@ def setup_ui_handlers(
 
     def on_menu_closed(**kw):
         active_view[0] = status_view
-        status_bar.set_title("Amarelli")
+        status_bar.set_title("Liquorice")
         legend.set_text("\u25c0 menu  \u25b6 backup")
         status_view.refresh()
         display.render_full(active_view[0], status_bar, legend)
@@ -583,7 +542,7 @@ def setup_ui_handlers(
         if wifi is not None:
             status_bar.set_wifi(wifi)
             for v in active_view:
-                if hasattr(v, '_wifi'):
+                if hasattr(v, "_wifi"):
                     v._wifi = wifi
 
     def on_legend_update(text, **kw):
@@ -599,5 +558,4 @@ def setup_ui_handlers(
 
 
 def load_font(size=15):
-    """Font di default di Pillow, scalato alla dimensione richiesta."""
     return ImageFont.load_default(size)

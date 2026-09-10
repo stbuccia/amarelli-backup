@@ -1,7 +1,7 @@
 """Diagnostica collegamento SD Card reader breakout via SPI.
 
 Protocollo SD SPI: dopo aver inviato un comando (6 byte), la SD risponde
-con R1 dopo alcuni cicli di clock — MAI durante il comando stesso.
+con R1 dopo alcuni cicli di clock: MAI durante il comando stesso.
 
 Collegamenti attesi (SPI0, CE0):
   CS   → GPIO 8  (pin 24)
@@ -83,15 +83,15 @@ def test_spi_open():
         try:
             s = spidev.SpiDev()
             s.open(bus, dev)
-            print(f"  /dev/spidev{bus}.{dev} — OK")
+            print(f"  /dev/spidev{bus}.{dev}: OK")
             s.close()
             found += 1
         except FileNotFoundError:
-            print(f"  /dev/spidev{bus}.{dev} — non esiste")
+            print(f"  /dev/spidev{bus}.{dev}: non esiste")
         except PermissionError:
-            print(f"  /dev/spidev{bus}.{dev} — permesso negato")
+            print(f"  /dev/spidev{bus}.{dev}: permesso negato")
         except Exception as e:
-            print(f"  /dev/spidev{bus}.{dev} — {e}")
+            print(f"  /dev/spidev{bus}.{dev}: {e}")
 
     if found == 0:
         print("  Nessun device SPI trovato!")

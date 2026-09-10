@@ -15,19 +15,19 @@ You pick the backend in `config.json`, or from the web page at `http://<box-ip>:
 
 ## The two settings files
 
-- **`config.json`** (in the project root) — general settings: the backend, the rclone remote, the cache paths, the file filter.
-- **`.env`** (in the project root) — your secrets: WebDAV and Wi-Fi logins. This file is not in git, so it stays private.
+- **`config.json`** (in the project root): general settings. The backend, the rclone remote, the cache paths, the file filter.
+- **`.env`** (in the project root): your secrets. WebDAV and Wi-Fi logins. This file is not in git, so it stays private.
 
 If you have not created `.env` yet, do it now:
 
 ```bash
-cd ~/amarelli-backup
+cd ~/liquorice-backup
 cat > .env <<'EOF'
 WEBDAV_HOSTNAME=
 WEBDAV_FOLDER=
 WEBDAV_LOGIN=
 WEBDAV_PASSWORD=
-WIFI_AP_SSID=Amarelli
+WIFI_AP_SSID=Liquorice
 WIFI_AP_PASSWORD=change-me
 WIFI_INTERFACE=wlan0
 EOF
@@ -40,7 +40,7 @@ Put your server details in `.env`. Example for kDrive:
 
 ```dotenv
 WEBDAV_HOSTNAME=https://YOUR-ID.connect.kdrive.infomaniak.com
-WEBDAV_FOLDER=amarelli-backup
+WEBDAV_FOLDER=liquorice-backup
 WEBDAV_LOGIN=you@example.com
 WEBDAV_PASSWORD=your-password
 ```
@@ -67,17 +67,17 @@ Then tell the box to use rclone, in `config.json`:
 
 ```json
 "uploader": "rclone",
-"rclone_remote": "dropbox:amarelli-backup"
+"rclone_remote": "dropbox:liquorice-backup"
 ```
 
 Or set the same remote from the web page (`/config`, field *rclone remote*), which lists the remotes it finds
 
 ### What `rclone_remote` accepts
 
-- `dropbox:amarelli-backup` — a remote plus a subfolder
-- `dropbox` — the root of the remote (the `:` is added for you)
-- `/mnt/usb/backup` — a local folder (USB stick or disk); no remote needed
-- empty — uses the first remote from `rclone listremotes`
+- `dropbox:liquorice-backup`: a remote plus a subfolder
+- `dropbox`: the root of the remote (you can avoid `:`)
+- `/mnt/usb/backup`: a local folder (USB stick or disk); no remote needed
+- empty: uses the first remote from `rclone listremotes`
 
 More `config.json` keys you can set: `rclone_binary` (path to the program), `rclone_config` (a different config file), and `rclone_timeout` (seconds per command, default 300). The remote can also live in `.env` as `RCLONE_REMOTE`, used only when `rclone_remote` is empty.
 
@@ -86,7 +86,7 @@ More `config.json` keys you can set: `rclone_binary` (path to the program), `rcl
 If rclone is already set up on your PC, copy the config instead of doing it again:
 
 ```bash
-scp ~/.config/rclone/rclone.conf raspberry@amarelli.local:~/.config/rclone/rclone.conf
+scp ~/.config/rclone/rclone.conf raspberry@liquorice.local:~/.config/rclone/rclone.conf
 ```
 
 ## Retries and errors

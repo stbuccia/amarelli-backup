@@ -30,7 +30,7 @@ class WebDav(Uploader):
         )
         super().__init__(cfg, db, bus)
 
-    def _ensure_directory(self, directory: str) -> None:
+    def ensure_remote_dir(self, directory: str) -> None:
         path = PurePosixPath(directory)
         current = "/" if path.is_absolute() else ""
         for part in path.parts:
@@ -39,11 +39,6 @@ class WebDav(Uploader):
             current = f"{current.rstrip('/')}/{part}" if current else part
             if not self.client.check(current):
                 self.client.execute_request("mkdir", current)
-
-    # --- Operazioni richieste da Uploader ---
-
-    def ensure_remote_dir(self, directory: str) -> None:
-        self._ensure_directory(directory)
 
     def put(self, local_path, remote_path: str) -> None:
         self.client.upload_sync(str(remote_path), str(local_path))

@@ -6,7 +6,7 @@ Day to day, you use three things: the screen, the four buttons, and the LED stri
 
 1. Take the microSD card out of your camera
 2. Put it in the box's card reader
-3. The box finds the card and mounts it at `/mnt/amarelli-sd`. The screen shows `Ready`
+3. The box finds the card and mounts it at `/mnt/liquorice-sd`. The screen shows `Ready`
 4. Start the backup (press the confirm button, or let it run on its own in automatic mode, see below)
 5. The box copies the photos to a local cache, then uploads them. The screen shows the progress
 6. When the LED turns green and the screen says it is done, take the card out
@@ -47,6 +47,8 @@ Press Left from the main screen to open the menu:
 - **Operation**
   - *Manual*: you confirm each backup
   - *Automatic (LED)*: the box mounts, caches and uploads on its own; you can keep the box closed and follow it by the LED colour
+- **Debug**
+  - *Fake SD*: `Off (real SD)` reads from the SPI card reader, `On (fake-sd dir)` reads the photos from the local folder `~/liquorice/fake-sd` instead (the folder is created if missing). Handy to try a full backup with no card inserted; the switch takes effect right away, no restart needed.
 
 The menu saves your choices to `config.json`.
 
@@ -63,7 +65,7 @@ When everything goes through, the box lands on **completed** and waits. Press th
 A few things can interrupt that straight line:
 
 - **You press a button mid-backup.** The box pauses. It remembers exactly where it was, so pressing Right picks up from that step; pressing Left opens the menu instead.
-- **The network hiccups.** The box doesn't give up — it waits a moment and tries the same step again. On the screen and LED this shows as *retrying*. If it keeps failing after a few tries, it stops.
+- **The network hiccups.** The box doesn't give up: it waits a moment and tries the same step again. On the screen and LED this shows as *retrying*. If it keeps failing after a few tries, it stops.
 - **Something it can't fix, like a wrong password.** The box stops on **error** and shows a short message. Fix the cause, press confirm to clear it, and start again.
 
 So the happy path is just *idle → caching → uploading → completed*, with pruning or remote cleanup slipped in near the end depending on the mode, and pause, retry and error branching off only when they need to.
@@ -91,13 +93,8 @@ When you shut the lid, the magnet trips the reed switch and the screen sleeps to
 
 ## The web page
 
-The box runs a small web page. From a phone or computer on the same network:
+The box runs a small web page. From a phone or computer on the same network: **`http://<box-ip>:5000`**
 
-- **`http://<box-ip>:5000`** — status and controls.
-- **`http://<box-ip>:5000/config`** — all the settings, including the backup
-  destination and the rclone remote.
-
-Find the box's IP with *WiFi > Show IP*. If you are away from your usual network, use *WiFi > Start hotspot* to make the box create its own network, connect to it,
-then open the page, and also from the web page you can set the wifi network.
+Find the box's IP with *WiFi > Show IP*. If you are away from your usual network, use *WiFi > Start hotspot* to make the box create its own network, connect to it, then open the page, and also from the web page you can set the wifi network.
 
 Next: [Run as a service and troubleshooting](07-service-and-troubleshooting.md).

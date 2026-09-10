@@ -102,12 +102,6 @@ class Database:
         row = cursor.fetchone()
         return self._row_to_record(row) if row else None
 
-    def find_by_hash(self, file_hash: str) -> list[FileRecord]:
-        cursor = self.conn.execute(
-            "SELECT * FROM files WHERE file_hash = ?", (file_hash,)
-        )
-        return [self._row_to_record(row) for row in cursor.fetchall()]
-
     def create(
         self,
         file_hash: str,
@@ -116,24 +110,22 @@ class Database:
         size_bytes: int,
         mtime: float,
     ) -> FileRecord:
-        now = time.time()
         self.conn.execute(
             """INSERT INTO files (file_hash, sd_path, cache_path, size_bytes, mtime, cached_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (file_hash, sd_path, cache_path, size_bytes, mtime, now),
+            (file_hash, sd_path, cache_path, size_bytes, mtime, time.time()),
         )
         return self.find_by_sd_path(sd_path)
 
     def re_cache(
         self, file_hash: str, sd_path: str, cache_path: str, size_bytes: int, mtime: float
     ) -> FileRecord:
-        now = time.time()
         self.conn.execute(
             """UPDATE files SET file_hash = ?, cache_path = ?, size_bytes = ?, mtime = ?,
                cached_at = ?, uploaded_at = NULL, remote_path = NULL,
                upload_error = NULL, upload_attempts = 0, pruned_at = NULL, mark_delete = 0
                WHERE sd_path = ?""",
-            (file_hash, cache_path, size_bytes, mtime, now, sd_path),
+            (file_hash, cache_path, size_bytes, mtime, time.time(), sd_path),
         )
         return self.find_by_sd_path(sd_path)
 
@@ -152,8 +144,7 @@ class Database:
     def find_pending_uploads(self) -> list[FileRecord]:
         cursor = self.conn.execute(
             """SELECT * FROM files
-               WHERE cache_path IS NOT NULL
-                  AND uploaded_at IS NULL
+               WHERE cache_path IS NOT NULL AND uploaded_at IS NULL
                ORDER BY cached_at"""
         )
         return [self._row_to_record(row) for row in cursor.fetchall()]
@@ -180,9 +171,7 @@ class Database:
             (time.time(), file_id),
         )
 
-    def mark_deleted_files(
-        self, seen_paths: set[str], remote_prefix: str
-    ) -> None:
+    def mark_deleted_files(self, seen_paths: set[str], remote_prefix: str) -> None:
         pattern = remote_prefix + "%"
         if seen_paths:
             placeholders = ",".join("?" for _ in seen_paths)

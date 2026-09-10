@@ -53,7 +53,7 @@ def main():
     display = Display(epd2in13_V4.EPD(), load_font())
     try:
         display.init()
-        display.render_full(HelloView(), StatusBar("Amarelli"), Legend("test display"))
+        display.render_full(HelloView(), StatusBar("Liquorice"), Legend("test display"))
         print(f'"{TEXT}" visualizzato per 5 secondi.')
         time.sleep(5)
     finally:

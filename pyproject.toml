@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "amarelli"
+name = "liquorice"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
@@ -29,4 +29,4 @@ package-dir = {"" = "software"}
 py-modules = ["backup", "cache", "config", "database", "display", "eventbus", "exceptions", "flask_app", "keylistener", "led_status", "log", "main", "menu", "models", "rclone_uploader", "sdcard", "uploader", "webdav_uploader", "wifi"]
 
 [project.scripts]
-amarelli = "main:main"
+liquorice = "main:main"

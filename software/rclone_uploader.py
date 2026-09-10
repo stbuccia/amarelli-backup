@@ -1,17 +1,14 @@
 #!/usr/bin/python3
 """Backend di upload basato sulla CLI di rclone.
 
-Copre qualunque destinazione supportata da rclone (Google Drive, Dropbox,
-OneDrive, S3, Backblaze, SFTP, WebDAV, ...) senza dipendenze Python
-aggiuntive: la configurazione dei remoti si fa una volta con `rclone config`.
-
-Il remoto si imposta con `rclone_remote` in config.json (o RCLONE_REMOTE
-nel .env):
+Copre qualunque destinazione rclone (Google Drive, Dropbox, OneDrive, S3,
+Backblaze, SFTP, WebDAV, ...). Il remoto si imposta con `rclone_remote` in
+config.json o RCLONE_REMOTE nel .env:
 
     "gdrive"              -> radice del remoto gdrive
     "gdrive:foto/backup"  -> sottocartella del remoto gdrive
-    "/mnt/usb/backup"     -> semplice cartella locale (chiavetta USB, disco)
-    ""                    -> usa il primo remoto configurato in rclone
+    "/mnt/usb/backup"     -> cartella locale (chiavetta USB, disco)
+    ""                    -> primo remoto configurato in rclone
 """
 
 import logging
@@ -21,20 +18,14 @@ from uploader import Uploader
 
 logger = logging.getLogger(__name__)
 
-# Exit code rclone che non migliorano con un retry.
-# 1 = errore di sintassi/uso, 3 = directory non trovata,
-# 4 = file non trovato, 7 = errore fatale (retry inutile).
+# Exit code rclone che non migliorano con un retry:
+# 1 uso/sintassi, 3 dir mancante, 4 file mancante, 7 errore fatale.
 PERMANENT_EXIT_CODES = frozenset({1, 3, 4, 7})
-
-# Exit code usato internamente per i timeout (5 = errore temporaneo).
 TIMEOUT_EXIT_CODE = 5
-
 DEFAULT_TIMEOUT = 300
 
 
 class RcloneError(Exception):
-    """Errore di un comando rclone, con exit code e stderr."""
-
     def __init__(self, returncode: int, stderr: str, args: list[str]):
         self.returncode = returncode
         self.stderr = (stderr or "").strip()
@@ -53,13 +44,10 @@ class Rclone(Uploader):
         self._config_file = getattr(cfg, "rclone_config", None) or ""
         self._timeout = int(getattr(cfg, "rclone_timeout", None) or DEFAULT_TIMEOUT)
         if runner is not None:
-            # Iniettabile nei test: riceve la lista di argomenti rclone.
             self._run = runner
         self._prefix = self._resolve_prefix(getattr(cfg, "rclone_remote", "") or "")
         logger.info("rclone backend ready, destination prefix: %s", self._prefix)
         super().__init__(cfg, db, bus)
-
-    # --- Risoluzione del remoto ---
 
     def _resolve_prefix(self, remote: str) -> str:
         remote = remote.strip()
@@ -68,12 +56,10 @@ class Rclone(Uploader):
 
         if ":" in remote:
             name, _, base = remote.partition(":")
-            # Solo i separatori finali vengono rimossi: un percorso assoluto
-            # (es. "sftp:/srv/backup") deve restare assoluto.
+            # Rimuovi solo gli slash finali: "sftp:/srv/backup" resta assoluto.
             base = base.rstrip("/")
             return f"{name}:{base}" if base else f"{name}:"
 
-        # Percorso locale: rclone accetta direttamente una directory.
         if remote.startswith(("/", "~", ".")):
             return remote.rstrip("/")
 
@@ -87,7 +73,9 @@ class Rclone(Uploader):
                 "No rclone remote configured: run 'rclone config' or set rclone_remote"
             )
         chosen = remotes[0]
-        logger.info("rclone_remote not set, using the first configured remote: %s", chosen)
+        logger.info(
+            "rclone_remote not set, using the first configured remote: %s", chosen
+        )
         return chosen
 
     def _remote_path(self, path: str) -> str:
@@ -98,13 +86,11 @@ class Rclone(Uploader):
             return f"{self._prefix}{rel}"
         return f"{self._prefix}/{rel}"
 
-    # --- Esecuzione dei comandi ---
-
     def _command(self, args: list[str]) -> list[str]:
         command = [self._binary]
         if self._config_file:
             command += ["--config", self._config_file]
-        # I retry con backoff sono gestiti dalla macchina a stati di Backup.
+        # I retry con backoff li gestisce la macchina a stati di Backup.
         command += ["--retries", "1"]
         return command + list(args)
 
@@ -127,8 +113,6 @@ class Rclone(Uploader):
         if result.returncode != 0:
             raise RcloneError(result.returncode, result.stderr, args)
         return result.stdout
-
-    # --- Operazioni richieste da Uploader ---
 
     def ensure_remote_dir(self, directory: str) -> None:
         self._run(["mkdir", self._remote_path(directory)])

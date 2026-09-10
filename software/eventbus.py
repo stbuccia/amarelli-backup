@@ -11,11 +11,6 @@ class EventBus:
     def on(self, event: str, handler):
         self._handlers[event].append(handler)
 
-    def off(self, event: str, handler):
-        self._handlers[event] = [
-            h for h in self._handlers[event] if h is not handler
-        ]
-
     def emit(self, event: str, **data):
         for handler in self._handlers.get(event, []):
             try:

@@ -1,4 +1,12 @@
 import logging
+import os
+import shutil
+import socket
+import ssl
+import struct
+import subprocess
+import tempfile
+import threading
 
 import nmcli
 from nmcli._exception import NotExistException
@@ -10,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 class WiFiManager:
-    AP_CONNECTION_NAME = "Amarelli AP"
+    AP_CONNECTION_NAME = "Liquorice AP"
     AP_IP = "192.168.4.1"
 
     def __init__(self, cfg):
@@ -27,9 +35,7 @@ class WiFiManager:
         try:
             nmcli.connection.delete(self.AP_CONNECTION_NAME)
         except NotExistException:
-            log.debug(
-                "Connection %s not present, skipping delete", self.AP_CONNECTION_NAME
-            )
+            log.debug("Connection %s not present, skipping delete", self.AP_CONNECTION_NAME)
 
     def _ap_options(self, ssid, password):
         return {
@@ -44,64 +50,41 @@ class WiFiManager:
         }
 
     def _ensure_ip_forward(self):
-        import subprocess
         subprocess.run(
             ["sysctl", "-w", "net.ipv4.ip_forward=1"],
             capture_output=True, check=False,
         )
 
     def _add_iptables_rules(self):
-        import subprocess
-        subprocess.run(
-            ["iptables", "-t", "nat", "-C", "PREROUTING",
-             "-p", "tcp", "--dport", "80",
-             "-j", "REDIRECT", "--to-port", "5000"],
-            capture_output=True, check=False,
-        )
-        subprocess.run(
-            ["iptables", "-t", "nat", "-A", "PREROUTING",
-             "-p", "tcp", "--dport", "80",
-             "-j", "REDIRECT", "--to-port", "5000"],
-            capture_output=True, check=False,
-        )
-        subprocess.run(
-            ["iptables", "-t", "nat", "-C", "PREROUTING",
-             "-p", "udp", "--dport", "53",
-             "-j", "REDIRECT", "--to-port", "1053"],
-            capture_output=True, check=False,
-        )
-        subprocess.run(
-            ["iptables", "-t", "nat", "-A", "PREROUTING",
-             "-p", "udp", "--dport", "53",
-             "-j", "REDIRECT", "--to-port", "1053"],
-            capture_output=True, check=False,
-        )
+        for proto, dport, toport in (("tcp", "80", "5000"), ("udp", "53", "1053")):
+            subprocess.run(
+                ["iptables", "-t", "nat", "-C", "PREROUTING", "-p", proto,
+                 "--dport", dport, "-j", "REDIRECT", "--to-port", toport],
+                capture_output=True, check=False,
+            )
+            subprocess.run(
+                ["iptables", "-t", "nat", "-A", "PREROUTING", "-p", proto,
+                 "--dport", dport, "-j", "REDIRECT", "--to-port", toport],
+                capture_output=True, check=False,
+            )
 
     def _del_iptables_rules(self):
-        import subprocess
-        subprocess.run(
-            ["iptables", "-t", "nat", "-D", "PREROUTING",
-             "-p", "tcp", "--dport", "80",
-             "-j", "REDIRECT", "--to-port", "5000"],
-            capture_output=True, check=False,
-        )
-        subprocess.run(
-            ["iptables", "-t", "nat", "-D", "PREROUTING",
-             "-p", "udp", "--dport", "53",
-             "-j", "REDIRECT", "--to-port", "1053"],
-            capture_output=True, check=False,
-        )
+        for proto, dport, toport in (("tcp", "80", "5000"), ("udp", "53", "1053")):
+            subprocess.run(
+                ["iptables", "-t", "nat", "-D", "PREROUTING", "-p", proto,
+                 "--dport", dport, "-j", "REDIRECT", "--to-port", toport],
+                capture_output=True, check=False,
+            )
 
     def _ensure_cert(self) -> tuple[str, str]:
-        import os, tempfile, subprocess as _subprocess
-        cert_dir = tempfile.mkdtemp(prefix="amarelli_tls_")
+        cert_dir = tempfile.mkdtemp(prefix="liquorice_tls_")
         cert_path = os.path.join(cert_dir, "cert.pem")
         key_path = os.path.join(cert_dir, "key.pem")
-        _subprocess.run(
+        subprocess.run(
             ["openssl", "req", "-x509", "-newkey", "rsa:2048",
              "-keyout", key_path, "-out", cert_path,
              "-days", "3650", "-nodes",
-             "-subj", f"/CN={self.AP_IP}/O=Amarelli"],
+             "-subj", f"/CN={self.AP_IP}/O=Liquorice"],
             capture_output=True, check=True,
         )
         log.info("Self-signed TLS cert generated at %s", cert_path)
@@ -109,9 +92,8 @@ class WiFiManager:
         return cert_path, key_path
 
     def _start_captive_tls(self):
-        import ssl, socket, threading, os, subprocess as _subprocess
         cert_path, key_path = self._ensure_cert()
-        CAPTIVE_PATHS = (
+        captive_paths = (
             b"/generate_204", b"/nm/generate_204",
             b"/hotspot-detect.html", b"/library/test/success.html",
             b"/success.txt",
@@ -123,16 +105,15 @@ class WiFiManager:
         bindsock.bind(("0.0.0.0", 443))
         bindsock.listen(5)
         bindsock.settimeout(1.0)
-        log.info("Captive TLS server listening on :443")
         stop_event = threading.Event()
+
         def client_thread(conn):
             try:
                 data = conn.recv(4096)
                 if data:
                     request_line = data.split(b"\r\n")[0]
                     path = request_line.split(b" ")[1] if b" " in request_line else b"/"
-                    is_captive = any(path.startswith(p) for p in CAPTIVE_PATHS)
-                    if is_captive:
+                    if any(path.startswith(p) for p in captive_paths):
                         response = (
                             b"HTTP/1.1 204 No Content\r\n"
                             b"Content-Length: 0\r\n"
@@ -153,13 +134,13 @@ class WiFiManager:
                     conn.close()
                 except Exception:
                     pass
+
         def run():
             while not stop_event.is_set():
                 try:
                     raw, addr = bindsock.accept()
                     ssock = context.wrap_socket(raw, server_side=True)
-                    t = threading.Thread(target=client_thread, args=(ssock,), daemon=True)
-                    t.start()
+                    threading.Thread(target=client_thread, args=(ssock,), daemon=True).start()
                 except socket.timeout:
                     continue
                 except ssl.SSLError:
@@ -169,6 +150,7 @@ class WiFiManager:
                         pass
                 except Exception:
                     break
+
         t = threading.Thread(target=run, daemon=True)
         t.start()
         self._tls_server_sock = bindsock
@@ -177,22 +159,19 @@ class WiFiManager:
         log.info("Captive TLS server ready on :443")
 
     def _stop_captive_tls(self):
-        import shutil
-        if hasattr(self, '_tls_stop_event'):
+        if hasattr(self, "_tls_stop_event"):
             self._tls_stop_event.set()
-        if hasattr(self, '_tls_server_sock'):
+        if hasattr(self, "_tls_server_sock"):
             try:
                 self._tls_server_sock.close()
             except Exception:
                 pass
-        if hasattr(self, '_cert_dir'):
+        if hasattr(self, "_cert_dir"):
             shutil.rmtree(self._cert_dir, ignore_errors=True)
         log.info("Captive TLS server stopped")
 
     def _start_dns_server(self):
-        import socket, struct, threading
-
-        CAPTIVE_DOMAINS = (
+        captive_domains = (
             b"connectivitycheck.gstatic.com",
             b"www.google.com",
             b"clients3.google.com",
@@ -215,7 +194,6 @@ class WiFiManager:
                     if len(data) < 12:
                         continue
                     tid = data[:2]
-                    flags = data[2:4]
                     qdcount = struct.unpack(">H", data[4:6])[0]
                     if qdcount == 0:
                         continue
@@ -231,19 +209,16 @@ class WiFiManager:
                             pos += 1
                             if pos + length > len(data):
                                 break
-                            qname_parts.append(data[pos:pos+length])
-                            qname_pos = pos
+                            qname_parts.append(data[pos:pos + length])
                             pos += length
                             if length >= 192:
                                 break
                         qname = b".".join(qname_parts).lower()
                         if pos + 4 > len(data):
                             break
-                        qtype = struct.unpack(">H", data[pos:pos+2])[0]
-                        qclass = struct.unpack(">H", data[pos+2:pos+4])[0]
+                        qtype = struct.unpack(">H", data[pos:pos + 2])[0]
                         pos += 4
-                        spoof = any(qname.endswith(d) for d in CAPTIVE_DOMAINS)
-                        if not spoof:
+                        if not any(qname.endswith(d) for d in captive_domains):
                             continue
                         response = bytearray()
                         response += tid
@@ -253,13 +228,12 @@ class WiFiManager:
                         response += struct.pack(">H", 0)
                         response += struct.pack(">H", 0)
                         response += data[original_pos:pos]
-                        ip = socket.inet_aton(self.AP_IP)
                         response += struct.pack(">H", 0xC00C)
                         response += struct.pack(">H", qtype)
                         response += struct.pack(">H", 1)
                         response += struct.pack(">I", 60)
                         response += struct.pack(">H", 4)
-                        response += ip
+                        response += socket.inet_aton(self.AP_IP)
                         sock.sendto(response, addr)
                         log.debug("DNS spoof: %s -> %s", qname, self.AP_IP)
                 except Exception:
@@ -312,24 +286,20 @@ class WiFiManager:
             except Exception as e:
                 log.error("Failed to scan networks: %s", e)
                 return []
-        networks = []
-        for row in output:
-            networks.append({
-                "ssid": row.ssid,
-                "signal": row.signal,
-                "security": row.security,
-                "channel": row.chan,
-            })
         seen = set()
         unique = []
-        for n in networks:
-            if n["ssid"] and n["ssid"] not in seen:
-                seen.add(n["ssid"])
-                unique.append(n)
+        for row in output:
+            if row.ssid and row.ssid not in seen:
+                seen.add(row.ssid)
+                unique.append({
+                    "ssid": row.ssid,
+                    "signal": row.signal,
+                    "security": row.security,
+                    "channel": row.chan,
+                })
         return unique
 
     def connect_to_network(self, ssid: str, password: str = "") -> bool:
-        import subprocess
         try:
             self.stop_ap()
         except Exception:
@@ -343,10 +313,9 @@ class WiFiManager:
             if r.returncode == 0:
                 log.info("Connected to '%s'", ssid)
                 return True
-            else:
-                detail = r.stderr.strip() or r.stdout.strip()
-                log.error("Failed to connect to '%s': %s", ssid, detail)
-                return False
+            detail = r.stderr.strip() or r.stdout.strip()
+            log.error("Failed to connect to '%s': %s", ssid, detail)
+            return False
         except subprocess.TimeoutExpired:
             log.error("Failed to connect to '%s': timeout", ssid)
             return False
@@ -361,11 +330,10 @@ class WiFiManager:
             return False
 
     def get_current_ssid(self) -> str | None:
-        import subprocess
         try:
             r = subprocess.run(
                 ["nmcli", "-t", "-f", "TYPE,NAME,DEVICE", "connection", "show", "--active"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
             )
             for line in r.stdout.strip().splitlines():
                 if line.startswith("802-11-wireless:") and line.count(":") >= 2:
@@ -377,11 +345,10 @@ class WiFiManager:
             return None
 
     def get_saved_connections(self) -> list[str]:
-        import subprocess
         try:
             r = subprocess.run(
                 ["nmcli", "-t", "-f", "TYPE,NAME", "connection", "show"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
             )
             saved = []
             for line in r.stdout.strip().splitlines():
@@ -394,22 +361,20 @@ class WiFiManager:
             return []
 
     def check_internet(self) -> bool:
-        import subprocess
         try:
             r = subprocess.run(
                 ["nmcli", "networking", "connectivity", "check"],
-                capture_output=True, text=True, timeout=15
+                capture_output=True, text=True, timeout=15,
             )
             return r.stdout.strip() == "full"
         except Exception:
             return False
 
     def forget_connection(self, ssid: str) -> bool:
-        import subprocess
         try:
             r = subprocess.run(
                 ["nmcli", "connection", "delete", ssid],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
             )
             if r.returncode == 0:
                 log.info("Forgot connection '%s'", ssid)
@@ -421,22 +386,20 @@ class WiFiManager:
             return False
 
     def disconnect(self) -> bool:
-        import subprocess
         try:
             r = subprocess.run(
                 ["nmcli", "device", "disconnect", self.ifname],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
             )
             return r.returncode == 0
         except Exception:
             return False
 
     def change_password(self, ssid: str, password: str) -> bool:
-        import subprocess
         try:
             r = subprocess.run(
                 ["nmcli", "connection", "modify", ssid, "802-11-wireless-security.psk", password],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
             )
             if r.returncode == 0:
                 log.info("Password updated for '%s'", ssid)

@@ -5,7 +5,7 @@ The project has an installer script. It does the hard work: system packages, SPI
 Run it from inside the project folder, as your normal user. Do not use `sudo`; the script asks for `sudo` itself when it needs it.
 
 ```bash
-cd ~/amarelli-backup
+cd ~/liquorice-backup
 ./install.sh
 ```
 
@@ -13,11 +13,11 @@ cd ~/amarelli-backup
 
 - Installs system packages: `git`, `network-manager`, Python build tools, image libraries, and `rclone`.
 - Turns on SPI and adds the setting for the card reader (at 10 MHz), so both chip-selects show up.
-- Creates the mount point `/mnt/amarelli-sd` and the data folder `~/amarelli/cache`
+- Creates the mount point `/mnt/liquorice-sd` and the data folder `~/liquorice/cache`
 - Creates a Python environment in `.venv` and installs the app into it
 - Downloads the Waveshare screen driver, fixes the reset pin to BCM 27, and copies it into the environment
 - Adds your user to the `gpio`, `kmem` and `spi` groups, so the LED strip and GPIO work
-- Installs and enables the `amarelli` service, so the box starts on its own
+- Installs and enables the `liquorice` service, so the box starts on its own
 
 ## Reboot
 
@@ -34,7 +34,7 @@ Your secrets do not live in the code. You must create a file called `.env` in th
 Create it now with the keys below (fill in your own values later, in chapter 5):
 
 ```bash
-cd ~/amarelli-backup
+cd ~/liquorice-backup
 cat > .env <<'EOF'
 # WebDAV backup (fill these in only if you use WebDAV)
 WEBDAV_HOSTNAME=
@@ -43,7 +43,7 @@ WEBDAV_LOGIN=
 WEBDAV_PASSWORD=
 
 # Wi-Fi hotspot the box can start on its own
-WIFI_AP_SSID=Amarelli
+WIFI_AP_SSID=Liquorice
 WIFI_AP_PASSWORD=change-me
 WIFI_INTERFACE=wlan0
 EOF
@@ -67,7 +67,7 @@ You should see `/dev/spidev0.0` and `/dev/spidev0.1`
 **The screen driver uses the right reset pin (BCM 27):**
 
 ```bash
-cd ~/amarelli-backup
+cd ~/liquorice-backup
 .venv/bin/python -c "import waveshare_epd.epdconfig as e; print(e.__file__); print('RST:', e.RST_PIN)"
 ```
 
@@ -94,4 +94,4 @@ You can run the software on a normal PC to explore the app and the web page, wit
 .venv/bin/python software/main.py --mock
 ```
 
-Mock mode only creates the environment, installs the dependencies, and prepares `~/amarelli`. It does not touch SPI, GPIO, the service, or the screen driver. To fake a card, point `sd_src` at a local folder (mock install makes `~/amarelli/fake-sd`), set `sd_mount` to `false`, and drop a few `.jpg` files in there. See chapter 5 for the config file. Next, pick where your photos should go: [Backup destination](05-backup-destination.md).
+Mock mode only creates the environment, installs the dependencies, and prepares `~/liquorice`. It does not touch SPI, GPIO, the service, or the screen driver. To fake a card, point `sd_src` at a local folder (mock install makes `~/liquorice/fake-sd`), set `sd_mount` to `false`, and drop a few `.jpg` files in there. See chapter 5 for the config file. Next, pick where your photos should go: [Backup destination](05-backup-destination.md).

@@ -5,11 +5,11 @@ __pycache__/
 *.egg-info/
 
 # Runtime files
-amarelli.log
+liquorice.log
 files.db
 
-# Artefatti di build di setuptools
+# setuptools build artifacts
 build/
 
-# Local Waveshare dependency: scaricata da install.sh, non versionata
+# Local Waveshare dependency: downloaded by install.sh, not versioned
 waveshare_epd/

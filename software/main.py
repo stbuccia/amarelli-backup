@@ -4,29 +4,21 @@ import os
 import argparse
 import logging
 import time
-import subprocess
 from pathlib import Path
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ASSETS_DIR = PROJECT_ROOT / "assets" / "images"
 
 parser = argparse.ArgumentParser(
-    description="Amarelli photo backup device - interactive UI"
+    description="Liquorice photo backup device - interactive UI"
 )
 parser.add_argument(
     "--mock", action="store_true", help="Use mock EPD (software rendering, no hardware)"
-)
-parser.add_argument(
-    "--imagick", action="store_true", help="Use ImageMagick display for live preview"
 )
 args = parser.parse_args()
 
 if args.mock:
     class EPD:
-        """Software-only EPD implementation used by the interactive mock."""
-
         width = 122
         height = 250
 
@@ -79,26 +71,14 @@ from uploader import create_uploader
 from log import setup_logger
 from backup import Backup, State
 from wifi import WiFiManager
-from flask_app import create_app
+from flask_app import create_app, get_ip_address
 from led_status import LedStatus
-
-
-def get_ip_address() -> str:
-    try:
-        result = subprocess.run(
-            ["hostname", "-I"], capture_output=True, text=True, timeout=5
-        )
-        ip = result.stdout.strip().split()[0]
-        return ip if ip else "N/A"
-    except Exception:
-        return "N/A"
 
 
 def run_interactive(epd):
     font = load_font(14)
-    snapshot_path = str(ASSETS_DIR / "display_output.png") if args.imagick else None
     spi_lock = threading.Lock()
-    display = Display(epd, font, snapshot_path=snapshot_path, io_lock=spi_lock)
+    display = Display(epd, font, io_lock=spi_lock)
     display.init()
 
     boot_view = BackupStatusView()
@@ -158,7 +138,7 @@ def run_interactive(epd):
     def sync_sd_card():
         nonlocal cache_obj, sd_available
         mode = getattr(config, "operation_mode", "manual")
-        # In auto montiamo subito, in manuale distinguiamo presente (device) vs montata (cache pronta)
+        # auto: monta subito. manual: distingue "presente" (device) da "montata".
         if mode == "auto":
             cache_available = sd_card.try_mount()
             ui_available = cache_available
@@ -189,12 +169,12 @@ def run_interactive(epd):
                     hint = f" (hint: mock expects sd_src dir to exist, got {config.sd_src})"
                 logger.info("SD card not available%s", hint)
             bus.emit("sd:changed", available=ui_available)
-            # auto: da COMPLETED/ERROR torna IDLE su rimozione SD per permettere nuovo ciclo su reinserimento
+            # auto: SD rimossa da COMPLETED/ERROR -> IDLE, pronto al reinserimento.
             if getattr(config, "operation_mode", "manual") == "auto" and wf.state in (State.COMPLETED, State.ERROR) and not ui_available:
                 logger.info("Auto: SD removed in %s, returning to IDLE", wf.state.name)
                 wf.stop()
 
-        # auto headless: avvia backup appena SD pronta o pending da uploadare (anche senza SD)
+        # auto headless: avvia appena c'e' SD pronta o pending da uploadare.
         if getattr(config, "operation_mode", "manual") == "auto" and wf.state == State.IDLE:
             try:
                 pending = db.count_pending_uploads()
@@ -205,10 +185,10 @@ def run_interactive(epd):
                 wf.start()
 
     def ensure_cache_on_demand() -> bool:
-        """Manual: tenta mount + Cache init al Confirm. Ritorna True se backup può partire (pending o cache).
-        Se la USB/SD è stata inserita dopo l'avvio, tenta sempre il mount prima di decidere."""
+        # Manual/Confirm: tenta mount + init Cache. True se il backup puo' partire
+        # (cache appena montata o pending da uploadare). Ritenta sempre il mount
+        # nel caso la SD sia stata inserita dopo l'avvio.
         nonlocal cache_obj
-        # Tenta mount in ogni caso: se la chiavetta USB è stata appena inserita, va rilevata
         mount_ok = sd_card.try_mount()
         if mount_ok and cache_obj is None:
             try:
@@ -219,7 +199,6 @@ def run_interactive(epd):
             except Exception as e:
                 logger.warning("On-demand SD mount ok but Cache init failed: %s", e)
                 bus.emit("sd:changed", available=False)
-                # non fallire se c'è pending da uploadare
                 try:
                     pending = db.count_pending_uploads()
                 except Exception:
@@ -234,11 +213,36 @@ def run_interactive(epd):
             pending = db.count_pending_uploads()
         except Exception:
             pending = 0
-        # Può partire se c'è cache (appena montata) o se c'è pending da uploadare
         if mount_ok or pending > 0:
             return True
         logger.info("On-demand mount failed: no SD available")
         return False
+
+    def on_sd_config_changed(key, value, **kw):
+        # Debug > Fake SD (o un cambio di percorso dal web): la sorgente cambia,
+        # quindi si smonta l'eventuale SD, si ricrea SdCard e si invalida la Cache.
+        if key not in ("fake_sd", "fake_sd_path", "sd_src", "sd_mount"):
+            return
+        nonlocal sd_card, cache_obj, sd_available
+        try:
+            sd_card.close()
+        except Exception as error:
+            logger.warning("Cannot release previous SD source: %s", error)
+        sd_card = SdCard(
+            config.sd_src,
+            mock=args.mock,
+            mount_enabled=getattr(config, "sd_mount", True),
+        )
+        cache_obj = None
+        wf.set_cache(None)
+        sd_available = None
+        logger.info(
+            "SD source changed: fake=%s src=%s mount=%s",
+            getattr(config, "fake_sd", False), config.sd_src, getattr(config, "sd_mount", True),
+        )
+        sync_sd_card()
+
+    bus.on("config:set", on_sd_config_changed)
 
     sync_sd_card()
 
@@ -261,7 +265,6 @@ def run_interactive(epd):
             config=config,
             db=db,
             mock=args.mock,
-            imagick=args.imagick,
             sync_sd_card=sync_sd_card,
             ensure_cache_on_demand=ensure_cache_on_demand,
             reed=reed,
@@ -285,7 +288,7 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
         display.render_full(current_view, sb, legend)
         return True
     if ch == "t":
-        titles = ["Amarelli", "Settings", "Photos", "System"]
+        titles = ["Liquorice", "Settings", "Photos", "System"]
         curr = titles.index(sb._title) if sb._title in titles else -1
         sb.set_title(titles[(curr + 1) % len(titles)])
         logger.info("Title: %s", sb._title)
@@ -295,7 +298,7 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
 
 
 def _loop(
-    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False, imagick=False,
+    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False,
     sync_sd_card=None,
     ensure_cache_on_demand=None,
     reed=None,
@@ -360,19 +363,15 @@ def _loop(
     if mock:
         display.render_full = _wrapped_render_full
 
-    # --- Key routing ---
     def on_key_press(key, **kw):
         logger.info("Key pressed: %s state=%s active=%s view=%s", key, backup.state.name, backup.is_active, "status" if active_view[0] is status_view else "menu")
         if active_view[0] is status_view:
-            # Operazioni lunghe: qualsiasi tasto laterale mette in pausa e ferma blink
+            # Durante un'operazione, ogni tasto laterale mette in pausa (tollera
+            # cablaggi diversi dei pin).
             if backup.is_active and key in ("LEFT", "RIGHT", "UP", "DOWN", "a", "d"):
-                # LEFT/RIGHT/UP/DOWN tutti mettono in pausa per tollerare cablaggi diversi (pin 29/35/38 vs 13/6/5/19)
                 if backup.pause():
                     logger.info("Pause requested via %s", key)
-                    return
-                # se pause non riuscito (es. già in pausa), non aprire menu
                 return
-            # Pausa: status "Paused", LED fisso arancione, RIGHT resume, LEFT apre menu
             if backup.state == State.PAUSED:
                 if key in ("RIGHT", "d", "\r", "\n"):
                     backup.resume()
@@ -384,7 +383,7 @@ def _loop(
             if key in ("LEFT", "a"):
                 bus.emit("menu:opened")
             else:
-                # manual: su Confirm ritenta mount on-demand se non c'è cache e non c'è pending
+                # manual/Confirm: se non c'e' ne' cache ne' pending, ritenta il mount.
                 if (
                     getattr(config, "operation_mode", "manual") == "manual"
                     and backup.state == State.IDLE
@@ -399,8 +398,7 @@ def _loop(
                     if pending == 0:
                         ok = ensure_cache_on_demand()
                         if not ok:
-                            sb.set_title("Amarelli")
-                            # status_view già aggiornata via sd:changed
+                            sb.set_title("Liquorice")
                             legend.set_text("\u25c0 menu  \u25b6 backup")
                             bus.emit("ui:redraw")
                             return
@@ -410,13 +408,11 @@ def _loop(
 
     bus.on("key:press", on_key_press)
 
-    # --- Initial overview display ---
-    sb.set_title("Amarelli")
+    sb.set_title("Liquorice")
     legend.set_text("\u25c0 menu  \u25b6 backup")
     status_view.refresh()
     display.render_full(active_view[0], sb, legend)
 
-    # --- Stato gestione WiFi/AP/Flask ---
     wifi_manager = None
     flask_thread = None
 
@@ -494,22 +490,13 @@ def _loop(
             except Exception as e:
                 logger.error("Error stopping AP: %s", e)
         sb.set_wifi(False)
-        sb.set_title("Amarelli")
+        sb.set_title("Liquorice")
         legend.set_text("\u25c0 menu  \u25b6 backup")
         display.render_full(active_view[0], sb, legend)
 
     bus.on("wifi:reset", stop_hotspot)
-    _imagick_proc = None
-    if imagick:
-        try:
-            _imagick_proc = subprocess.Popen(
-                ["display", "-update", "1", str(ASSETS_DIR / "display_output.png")]
-            )
-            print(f"[imagick] ImageMagick display started (pid {_imagick_proc.pid})")
-        except FileNotFoundError:
-            print("[imagick] 'display' not found. Install ImageMagick.")
 
-    print("Amarelli interactive. \u25c0 back, \u25b6 action")
+    print("Liquorice interactive. \u25c0 back, \u25b6 action")
     if mock:
         print("          i wifi  t title  (mock)")
 
@@ -518,15 +505,11 @@ def _loop(
             reed_closed = reed.get_state_change()
             if reed_closed is True:
                 logger.info("Coperchio chiuso")
-                # Mostra schermata di blocco dedicata prima di sospendere
-                lock_view = LockView()
-                # usa legend dedicata per il blocco
-                display.render_full(lock_view, sb, Legend("Coperchio chiuso"))
+                display.render_full(LockView(), sb, Legend("Coperchio chiuso"))
                 display.suspend()
             elif reed_closed is False:
                 logger.info("Coperchio aperto")
                 display.resume()
-                # Ripristina vista corrente con refresh completo
                 display.render_full(active_view[0], sb, legend)
 
         now = time.monotonic()
@@ -545,8 +528,6 @@ def _loop(
             continue
         if ch in ("q", "Q"):
             print("Exit.")
-            if _imagick_proc:
-                _imagick_proc.terminate()
             break
         if mock and _handle_mock_keys(ch, sb, display, active_view[0], legend):
             continue

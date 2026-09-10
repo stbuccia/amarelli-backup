@@ -8,46 +8,42 @@ logger = logging.getLogger(__name__)
 class KeyListener(ABC):
     @abstractmethod
     def get_key(self):
-        """Return a key identifier string or None."""
-        pass
+        ...
 
     def cleanup(self):
-        """Restore any system state (e.g., terminal settings)."""
         pass
 
 
 class TerminalKeyListener(KeyListener):
     def get_key(self):
-        import os as _os
-        import sys as _sys
-        import select as _select
-        import tty as _tty
-        import termios as _termios
+        import os
+        import sys
+        import select
+        import tty
+        import termios
 
-        if not _sys.stdin.isatty():
-            ch = _sys.stdin.read(1)
+        if not sys.stdin.isatty():
+            ch = sys.stdin.read(1)
             return "Q" if not ch else ch
 
-        fd = _sys.stdin.fileno()
-        old = _termios.tcgetattr(fd)
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
         try:
-            _tty.setraw(fd)
-            ch = _os.read(fd, 1)
+            tty.setraw(fd)
+            ch = os.read(fd, 1)
             if ch == b"\x1b":
-                if _select.select([fd], [], [], 0.05)[0]:
-                    rest = _os.read(fd, 2)
-                    if rest == b"[A":
-                        return "UP"
-                    elif rest == b"[B":
-                        return "DOWN"
-                    elif rest == b"[C":
-                        return "RIGHT"
-                    elif rest == b"[D":
-                        return "LEFT"
+                if select.select([fd], [], [], 0.05)[0]:
+                    rest = os.read(fd, 2)
+                    return {
+                        b"[A": "UP",
+                        b"[B": "DOWN",
+                        b"[C": "RIGHT",
+                        b"[D": "LEFT",
+                    }.get(rest)
                 return None
             return ch.decode("ascii", errors="replace")
         finally:
-            _termios.tcsetattr(fd, _termios.TCSADRAIN, old)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 class GpioKeyListener(KeyListener):
@@ -97,7 +93,6 @@ class GpioKeyListener(KeyListener):
     def get_key(self):
         if not self._available:
             return None
-
         try:
             return self._key_map[self._events.get_nowait()]
         except Exception:

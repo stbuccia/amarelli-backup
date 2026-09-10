@@ -1,10 +1,10 @@
 #!/bin/bash
 # Monta/smonta la SD collegata allo slot SPI (mmc_spi su spi0.1).
 # Il mount point coincide con "sd_src" di config.json.
-MNT="${AMARELLI_SD_MNT:-/mnt/amarelli-sd}"
-SPI_SPEED="${AMARELLI_SPI_SPEED:-10000000}"
+MNT="${LIQUORICE_SD_MNT:-/mnt/liquorice-sd}"
+SPI_SPEED="${LIQUORICE_SPI_SPEED:-10000000}"
 # ro per default: la SD e' la sorgente del backup, non va scritta.
-MOUNT_OPTS="${AMARELLI_MOUNT_OPTS:-ro}"
+MOUNT_OPTS="${LIQUORICE_MOUNT_OPTS:-ro}"
 
 # Prima partizione non montata su un mmcblk diverso da mmcblk0 (la card di
 # sistema). Il tipo di filesystem NON viene forzato: lo rileva il kernel.

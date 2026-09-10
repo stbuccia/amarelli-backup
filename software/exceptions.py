@@ -1,10 +1,10 @@
 class BackupError(Exception):
-    """Base exception for backup operations."""
+    pass
 
 
 class TransientError(BackupError):
-    """Recoverable error - the operation will be retried automatically."""
+    """Recoverable error, retried automatically."""
 
 
 class PermanentError(BackupError):
-    """Non-recoverable error - requires user intervention."""
+    """Needs user intervention, no point retrying."""

@@ -2,45 +2,45 @@
 
 ## Auto-start service
 
-The installer sets up a service called `amarelli` and turns it on, so the box starts on its own every time it powers up. You do not need to log in and launch anything.
+The installer sets up a service called `liquorice` and turns it on, so the box starts on its own every time it powers up. You do not need to log in and launch anything.
 
 The service runs `main.py` from the project folder as the `raspberry` user, and restarts it if it crashes.
 
 ### Managing the service
 
 ```bash
-sudo systemctl status amarelli     # check the status
-sudo systemctl restart amarelli    # restart after a config or code change
-sudo systemctl stop amarelli       # stop it
-sudo systemctl start amarelli      # start it again
+sudo systemctl status liquorice     # check the status
+sudo systemctl restart liquorice    # restart after a config or code change
+sudo systemctl stop liquorice       # stop it
+sudo systemctl start liquorice      # start it again
 ```
 
 ### Watching the logs
 
 ```bash
-journalctl -u amarelli -f          # live service output
+journalctl -u liquorice -f          # live service output
 ```
 
-The app also writes its own log to `~/amarelli/amarelli.log`, you can set also log location in `config.json` setting `log_path`
+The app also writes its own log to `~/liquorice/liquorice.log`, you can set also log location in `config.json` setting `log_path`
 
 ### Manual running
 
 To run it yourself (for example while testing), stop the service first, so two copies do not fight over the hardware:
 
 ```bash
-sudo systemctl stop amarelli
-cd ~/amarelli-backup
+sudo systemctl stop liquorice
+cd ~/liquorice-backup
 sudo .venv/bin/python software/main.py
 ```
 
 ### If you used a different username
 
-The service expects the project at `/home/raspberry/amarelli-backup` and the user `raspberry`. If your username or path is different, edit `systemd/amarelli.service` (the `User=`, `WorkingDirectory=`, `Environment=` and `ExecStart=` lines), then reinstall it:
+The service expects the project at `/home/raspberry/liquorice-backup` and the user `raspberry`. If your username or path is different, edit `systemd/liquorice.service` (the `User=`, `WorkingDirectory=`, `Environment=` and `ExecStart=` lines), then reinstall it:
 
 ```bash
-sudo install -m 0644 systemd/amarelli.service /etc/systemd/system/amarelli.service
+sudo install -m 0644 systemd/liquorice.service /etc/systemd/system/liquorice.service
 sudo systemctl daemon-reload
-sudo systemctl restart amarelli
+sudo systemctl restart liquorice
 ```
 
 ## Troubleshooting
@@ -84,7 +84,7 @@ sudo systemctl restart amarelli
 
   The same script also does `mount` and `umount`.
 - In `config.json`, `sd_mount` should be `true` for a real reader. Set it to `false` only when you fake the card with a local folder.
-- The card is expected at `/mnt/amarelli-sd` (the `sd_src` setting in `config.json`)
+- The card is expected at `/mnt/liquorice-sd` (the `sd_src` setting in `config.json`)
 
 ### The buttons do the wrong thing
 
@@ -106,11 +106,11 @@ sudo systemctl restart amarelli
   ```
 
 - A login error, or an unrecoverable rclone exit code (1, 3, 4, 7), stops the backup and shows `Error` on the screen. Fix the remote or the login, then start the backup again
-- Read `~/amarelli/amarelli.log` and `journalctl -u amarelli -f` for the exact message
+- Read `~/liquorice/liquorice.log` and `journalctl -u liquorice -f` for the exact message
 
 ### Cannot reach the web page
 
 - Get the IP from *WiFi > Show IP*, then open `http://<box-ip>:5000`.
 - On a network you do not control, use *WiFi > Start hotspot*, join the box's own network, then open the page
 
-If you started at chapter 1 and worked through to here, you now have a working Amarelli Backup box.
+If you started at chapter 1 and worked through to here, you now have a working Liquorice Backup box.

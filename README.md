@@ -1,6 +1,22 @@
-# Amarelli Backup
+# Liquorice Backup
 
-Amarelli Backup is a liquorice tin backup box. You put your camera microSD card in the box and it backups your photo copying them locally, and then uploading in your favorite cloud storage (WebDav Server ory any place with rclone supports like Dropbox, Google Drive and over 70 more cloud storages). E-ink screen show you the progress, four buttons allow you to interact and a LED show the status with the colour.
+Liquorice Backup is a liquorice tin backup box. 
+
+## Why
+
+As a photographer travelling without a laptop, you need a safe way to free your camera SD card anywhere. This project was born for that:
+
+* Insert the camera SD into the box: it copies every new photo to a local cache immediately, so you can remove the card right away and keep shooting
+* No internet needed for caching; no SD needed for uploading. The box uploads in background to your cloud when Wi-Fi is available
+* A small database avoids re-uploading the same file twice
+
+It is a low-cost, open-source alternative to commercial backup devices, built inside an Amarelli liquorice tin.
+
+This project was made for the [Laboratorio di Making](https://www.unibo.it/it/studiare/insegnamenti-competenze-trasversali-moocs/insegnamenti/insegnamento/2025/545359) exam at the University of Bologna.
+
+## How it works
+
+You put your camera microSD card in the box and it backups your photo copying them locally, and then uploading in your favorite cloud storage (WebDav Server ory any place with rclone supports like Dropbox, Google Drive and over 70 more cloud storages). E-ink screen show you the progress, four buttons allow you to interact and a LED show the status with the colour. This device is mostly inteded for travels, since usually you don't have a device with you to use for backup 
 
 You can check bu yourself in this demo video:
 
@@ -27,7 +43,7 @@ On the Raspberry Pi, after cloning the repository:
 sudo reboot
 ```
 
-The box starts on its own through the `amarelli` service. To try the software on a PC with no hardware:
+The box starts on its own through the `liquorice` service. To try the software on a PC with no hardware:
 
 ```bash
 ./install.sh --mock

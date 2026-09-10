@@ -1,9 +1,8 @@
 #!/usr/bin/python3
-"""Pipeline di upload condivisa da tutti i backend remoti.
+"""Pipeline di upload condivisa dai backend remoti.
 
-Un backend deve implementare solo tre operazioni elementari
-(`ensure_remote_dir`, `put`, `delete`): il ciclo sui file pendenti,
-l'aggiornamento del database e la classificazione degli errori sono qui.
+Un backend implementa solo ensure_remote_dir/put/delete; il ciclo sui file
+pendenti, il DB e la classificazione degli errori stanno qui.
 """
 
 import logging
@@ -15,8 +14,7 @@ from eventbus import EventBus
 
 logger = logging.getLogger(__name__)
 
-# Sottostringhe che indicano un problema di credenziali/permessi: non ha senso
-# ritentare, serve l'intervento dell'utente.
+# Errori di credenziali/permessi: inutile ritentare, serve l'utente.
 AUTH_ERROR_KEYWORDS = (
     "401",
     "403",
@@ -28,8 +26,6 @@ AUTH_ERROR_KEYWORDS = (
 
 
 class Uploader(ABC):
-    """Base comune dei backend di upload."""
-
     name = "uploader"
 
     def __init__(self, cfg, db, bus=None):
@@ -41,8 +37,6 @@ class Uploader(ABC):
         self.last_upload_stats = {"ok": 0, "failed": 0, "total": 0}
         self.last_cleanup_stats = {"ok": 0, "failed": 0}
 
-    # --- Configurazione ---
-
     @property
     def cloud_dst(self) -> str:
         return self._cloud_dst
@@ -52,26 +46,21 @@ class Uploader(ABC):
         self._cloud_dst = value
         self._ensured_dirs.clear()
 
-    # --- Operazioni specifiche del backend ---
-
     @abstractmethod
     def ensure_remote_dir(self, directory: str) -> None:
-        """Crea la directory remota (con i genitori) se non esiste."""
+        ...
 
     @abstractmethod
     def put(self, local_path: Path, remote_path: str) -> None:
-        """Carica un singolo file nel percorso remoto indicato."""
+        ...
 
     @abstractmethod
     def delete(self, remote_path: str) -> None:
-        """Cancella un singolo file remoto."""
+        ...
 
     def is_permanent_error(self, error: Exception) -> bool:
-        """True se l'errore non e' recuperabile con un retry."""
         text = str(error).lower()
         return any(keyword in text for keyword in AUTH_ERROR_KEYWORDS)
-
-    # --- Helper interni ---
 
     def _fail(self, error: Exception, permanent_msg: str, transient_msg: str):
         if self.is_permanent_error(error):
@@ -89,7 +78,9 @@ class Uploader(ABC):
         rel_path = local_path.relative_to(local_src).as_posix()
         return PurePosixPath(cloud_dst) / rel_path
 
-    # --- Pipeline condivisa ---
+    def _cancelled(self) -> bool:
+        cancel = getattr(self, "_cancel", None)
+        return cancel is not None and cancel.is_set()
 
     def upload(self):
         cloud_dst = self._cloud_dst
@@ -117,7 +108,7 @@ class Uploader(ABC):
         last_error = None
 
         for f in files:
-            if getattr(self, "_cancel", None) is not None and self._cancel.is_set():
+            if self._cancelled():
                 logger.info("Upload paused by user at %s", f.cache_path)
                 break
             local_path = Path(f.cache_path)
@@ -125,7 +116,6 @@ class Uploader(ABC):
 
             try:
                 self._ensure_remote_dir_cached(str(remote_path.parent))
-
                 logger.info("Uploading %s -> %s", local_path, remote_path)
                 self.put(local_path, str(remote_path))
                 self.db.mark_uploaded(f.id, str(remote_path))
@@ -158,7 +148,7 @@ class Uploader(ABC):
         last_error = None
 
         for f in files:
-            if getattr(self, "_cancel", None) is not None and self._cancel.is_set():
+            if self._cancelled():
                 logger.info("Remote cleanup paused by user")
                 break
             remote_path = f.remote_path
@@ -194,11 +184,8 @@ def available_backends() -> tuple[str, ...]:
 
 
 def create_uploader(cfg, db, bus=None) -> Uploader:
-    """Istanzia il backend indicato da `cfg.uploader` (default: webdav).
-
-    Gli import sono ritardati perche' ogni backend ha dipendenze diverse:
-    con rclone il pacchetto `webdavclient3` puo' non essere installato.
-    """
+    # Import ritardati: ogni backend ha dipendenze diverse (rclone puo' girare
+    # senza webdavclient3 installato e viceversa).
     name = (getattr(cfg, "uploader", None) or "webdav").strip().lower()
 
     if name == "webdav":

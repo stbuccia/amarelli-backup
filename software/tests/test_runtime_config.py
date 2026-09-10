@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -58,6 +59,46 @@ class RuntimeConfigTests(unittest.TestCase):
         menu.enter()
 
         self.assertIsNone(cfg.prune_min_days)
+
+    def test_debug_menu_toggles_fake_sd_source(self):
+        fake_dir = Path(self.tmpdir.name) / "fake-sd"
+        self.config_file.write_text(json.dumps({
+            "sd_src": "/mnt/liquorice-sd",
+            "sd_mount": True,
+            "fake_sd": False,
+            "fake_sd_path": str(fake_dir),
+        }))
+        cfg = Config(bus=self.bus)
+        menu = Menu(config=cfg, bus=self.bus)
+        self.assertEqual(cfg.sd_src, "/mnt/liquorice-sd")
+
+        # Debug > Fake SD > On.
+        while menu.current_label != "Debug":
+            menu.down()
+        menu.enter()
+        self.assertEqual(menu.current_label, "Fake SD")
+        menu.enter()
+        menu.down()
+        menu.enter()
+
+        self.assertTrue(cfg.fake_sd)
+        self.assertEqual(cfg.sd_src, str(fake_dir))
+        self.assertFalse(cfg.sd_mount)
+        self.assertTrue(fake_dir.is_dir())
+        self.assertTrue(json.loads(self.config_file.read_text())["fake_sd"])
+
+        # Off: si torna alla SD reale senza riavviare.
+        menu.enter()
+        menu.enter()
+
+        self.assertFalse(cfg.fake_sd)
+        self.assertEqual(cfg.sd_src, "/mnt/liquorice-sd")
+        self.assertTrue(cfg.sd_mount)
+
+    def test_fake_sd_path_defaults_under_home(self):
+        self.config_file.write_text(json.dumps({"sd_src": "/mnt/liquorice-sd", "fake_sd": False}))
+        cfg = Config(bus=self.bus)
+        self.assertEqual(cfg.fake_sd_path, os.path.expanduser("~/liquorice/fake-sd"))
 
     def test_backup_mode_changes_on_next_start_only(self):
         class FakeCache:
@@ -161,7 +202,7 @@ class RuntimeConfigTests(unittest.TestCase):
         uploader = object.__new__(WebDav)
         uploader.client = FakeClient()
 
-        uploader._ensure_directory("backup/2026/08")
+        uploader.ensure_remote_dir("backup/2026/08")
 
         self.assertEqual(uploader.client.created, ["backup", "backup/2026", "backup/2026/08"])
 
@@ -272,7 +313,7 @@ class RuntimeConfigTests(unittest.TestCase):
         view = BackupStatusView(bus=self.bus)
         view.progress_total = 3
 
-        self.bus.emit("cache:file", path="/mnt/amarelli-sd/DCIM/photo.jpg", processed=1)
+        self.bus.emit("cache:file", path="/mnt/liquorice-sd/DCIM/photo.jpg", processed=1)
 
         self.assertEqual(view.current_file, "photo.jpg")
         self.assertEqual(view.progress_current, 1)
@@ -492,13 +533,13 @@ class UploaderBackendTests(unittest.TestCase):
         cfg = Config(bus=bus)
         # Simula POST /config con uploader=rclone + remoto rclone
         bus.emit("config:set", key="uploader", value="rclone")
-        bus.emit("config:set", key="rclone_remote", value="dropbox:amarelli-test")
+        bus.emit("config:set", key="rclone_remote", value="dropbox:liquorice-test")
 
         self.assertEqual(cfg.uploader, "rclone")
-        self.assertEqual(cfg.rclone_remote, "dropbox:amarelli-test")
+        self.assertEqual(cfg.rclone_remote, "dropbox:liquorice-test")
         saved = json.loads(config_file.read_text())
         self.assertEqual(saved["uploader"], "rclone")
-        self.assertEqual(saved["rclone_remote"], "dropbox:amarelli-test")
+        self.assertEqual(saved["rclone_remote"], "dropbox:liquorice-test")
 
     def test_uploader_switch_is_deferred_while_backup_is_active(self):
         from backup import State

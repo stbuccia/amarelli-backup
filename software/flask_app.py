@@ -31,9 +31,7 @@ def _signal_bars(pct: int) -> str:
 
 
 def _get_rclone_remotes() -> list[str]:
-    """Ritorna i remoti configurati in rclone (es. ['dropbox:', 'gdrive:'])."""
     try:
-        # Prova a rispettare RCLONE_CONFIG_FILE dal .env/config se presente
         cfg_path = os.getenv("RCLONE_CONFIG_FILE", "")
         cmd = ["rclone", "listremotes"]
         if cfg_path:
@@ -105,10 +103,10 @@ def create_app(wifi_manager=None, db=None, bus=None):
     def index():
         if not wifi_manager:
             return """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Amarelli</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Liquorice</title>
 <style>body{font-family:-apple-system,sans-serif;padding:16px;background:#f0f2f5;color:#1c1e21}
 h1{font-size:1.2em}.card{background:#fff;border-radius:10px;padding:16px;margin-top:12px}</style>
-</head><body><div class="card"><h1>Amarelli Backup</h1>
+</head><body><div class="card"><h1>Liquorice Backup</h1>
 <p class="text-muted">No WiFi manager available.</p></div></body></html>"""
 
         networks = wifi_manager.scan_networks()
@@ -181,14 +179,14 @@ onsubmit="return confirm('Forget &quot;{_h(ssid)}&quot;?')">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Amarelli WiFi</title>
+<title>Liquorice WiFi</title>
 <style>{CSS}</style>
 </head>
 <body>
 
 <div class="header">
 <span class="dot {online_dot}" title="{online_label}"></span>
-<h1>Amarelli Backup</h1>
+<h1>Liquorice Backup</h1>
 <a href="/config" style="font-size:1.1em;text-decoration:none;color:#65676b" title="Settings">\u2699</a>
 <span class="text-muted" style="font-size:.82em">{ip}</span>
 </div>
@@ -375,10 +373,9 @@ function addNetwork() {{
         prune_sel = _select("prune_min_days", prune_display, {"immediate": "Delete now", "7": "After 7 days", "30": "After 30 days", "keep": "Keep forever"})
         op_mode_sel = _select("operation_mode", _val("operation_mode") or "manual", {"manual": "Manual (step-by-step)", "auto": "Automatic (LED headless)"})
 
-        # --- rclone remotes ---
         remotes = _get_rclone_remotes()
         current_remote = _val("rclone_remote")
-        # Assicura che il valore attuale sia tra le opzioni anche se non più listato
+        # Includi il valore corrente tra le opzioni anche se rclone non lo lista piu'.
         datalist_opts = ""
         seen = set(remotes)
         if current_remote and current_remote not in seen:
@@ -399,7 +396,7 @@ function addNetwork() {{
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Amarelli Settings</title>
+<title>Liquorice Settings</title>
 <style>{CSS}
 select:focus {{ border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }}
 </style>
@@ -407,7 +404,7 @@ select:focus {{ border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }}
 <body>
 
 <div class="header">
-<h1>Amarelli Backup</h1>
+<h1>Liquorice Backup</h1>
 <a href="/" style="font-size:1.1em;text-decoration:none;color:#65676b" title="WiFi">&larr; Back</a>
 <a href="/logs" style="font-size:.9em;text-decoration:none;color:#65676b" title="Logs">\U0001F4CB</a>
 </div>
@@ -435,7 +432,7 @@ select:focus {{ border-color: #216fdb; box-shadow: 0 0 0 1px #216fdb; }}
 <div class="card-title">Destinazione backup</div>
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Backend</div>{uploader_sel}</div>
 <div class="row" style="display:block;padding:8px 16px 12px"><div style="font-size:.8em;color:#65676b;margin-bottom:4px">Remoto rclone</div>
-<input list="rclone-remotes" name="rclone_remote" value="{_h(current_remote)}" placeholder="es. dropbox:amarelli-test  o  /mnt/usb/backup" style="width:100%;padding:10px 12px;border:1px solid #ccd0d5;border-radius:6px;font-size:.95em;outline:none">
+<input list="rclone-remotes" name="rclone_remote" value="{_h(current_remote)}" placeholder="es. dropbox:liquorice-test  o  /mnt/usb/backup" style="width:100%;padding:10px 12px;border:1px solid #ccd0d5;border-radius:6px;font-size:.95em;outline:none">
 <datalist id="rclone-remotes">{datalist_opts}</datalist>
 {rclone_hint}
 </div>
@@ -507,7 +504,7 @@ if (err) msg.innerHTML = '<div class="flash flash-error">' + err + '</div>';
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Amarelli Logs</title>
+<title>Liquorice Logs</title>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 body {{ font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace; background: #1e1e2e; color: #cdd6f4; padding: 0; }}
@@ -522,7 +519,7 @@ body {{ font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace; back
 <body>
 
 <div class="header">
-<h1>Amarelli Logs</h1>
+<h1>Liquorice Logs</h1>
 <a href="/config">&larr; Settings</a>
 </div>
 

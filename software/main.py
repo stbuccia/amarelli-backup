@@ -59,6 +59,7 @@ from display import (
     Display,
     load_font,
     setup_ui_handlers,
+    install_busy_timeout,
 )
 from menu import Menu
 from keylistener import TerminalKeyListener, GpioKeyListener, ReedSwitch
@@ -76,19 +77,21 @@ from led_status import LedStatus
 
 
 def run_interactive(epd):
-    font = load_font(14)
+    font = load_font(11)
     spi_lock = threading.Lock()
-    display = Display(epd, font, io_lock=spi_lock)
+    display = Display(epd, font, io_lock=spi_lock, health_check=not args.mock)
     display.init()
 
     boot_view = BackupStatusView()
     boot_view.status = "Starting..."
     display.render_full(boot_view, StatusBar(), Legend("Initializing..."))
 
-    led = LedStatus(bus=bus, mock=False)
-
     config = Config(bus=bus)
     setup_logger(config)
+    # LED creato dopo setup_logger: cosi' un eventuale "LED disabilitato"
+    # (permessi /dev/mem) finisce in liquorice.log e non solo sullo stderr
+    # del servizio.
+    led = LedStatus(bus=bus, mock=False)
     logger.info(
         "Config: mock=%s sd_src=%s cache=%s db=%s log=%s uploader=%s remote=%s cloud_dst=%s mode=%s filter=%s",
         args.mock,
@@ -246,7 +249,12 @@ def run_interactive(epd):
 
     sync_sd_card()
 
-    keys = TerminalKeyListener() if args.mock else GpioKeyListener(pins=(13, 6, 5, 19))
+    keys = (
+        TerminalKeyListener()
+        if args.mock
+        # pins = (UP, DOWN, LEFT/BACK, RIGHT/CONFIRM)
+        else GpioKeyListener(pins=(5, 6, 19, 13), display_busy=lambda: display.refreshing)
+    )
     reed = ReedSwitch(pin=16, enabled=not args.mock)
     if reed.is_closed:
         display.suspend()
@@ -415,23 +423,38 @@ def _loop(
 
     wifi_manager = None
     flask_thread = None
+    flask_server = None
 
     def _start_flask(wm=None):
-        nonlocal flask_thread
+        nonlocal flask_thread, flask_server
         if flask_thread is not None and flask_thread.is_alive():
             logger.info("Flask already running")
             return
+        from werkzeug.serving import make_server
+
         app = create_app(wifi_manager=wm, db=db, bus=bus)
+        flask_server = make_server("0.0.0.0", 5000, app)
         flask_thread = threading.Thread(
-            target=app.run,
-            kwargs={"host": "0.0.0.0", "port": 5000, "debug": False, "use_reloader": False},
-            daemon=True,
+            target=flask_server.serve_forever, daemon=True
         )
         flask_thread.start()
         logger.info("Flask avviato su 0.0.0.0:5000")
 
+    def _stop_flask():
+        nonlocal flask_thread, flask_server
+        if flask_server is not None:
+            try:
+                flask_server.shutdown()
+            except Exception as e:
+                logger.error("Error stopping Flask: %s", e)
+            flask_server = None
+        flask_thread = None
+        logger.info("Flask fermato")
+
     def start_hotspot(**kw):
-        nonlocal wifi_manager, flask_thread
+        nonlocal wifi_manager
+        # Per sicurezza il server web parte solo insieme all'access point:
+        # non deve mai restare in ascolto sulla rete Wi-Fi normale.
         logger.info("[MENU] Starting AP + Flask...")
 
         wifi_manager = WiFiManager(config)
@@ -460,18 +483,6 @@ def _loop(
     bus.on("hotspot:start", start_hotspot)
     bus.on("wifi:connect", lambda **kw: start_hotspot())
 
-    def start_web_server(**kw):
-        nonlocal wifi_manager
-        logger.info("[MENU] Starting web server...")
-        wifi_manager = WiFiManager(config)
-        _start_flask(wifi_manager)
-        ip = get_ip_address()
-        sb.set_title(f"Server: {ip}:5000")
-        legend.set_text("\u25c0 back")
-        display.render_full(active_view[0], sb, legend)
-
-    bus.on("server:start", start_web_server)
-
     def show_ip(**kw):
         ip = get_ip_address()
         logger.info("[MENU] IP: %s", ip)
@@ -482,13 +493,16 @@ def _loop(
     bus.on("wifi:show_ip", show_ip)
 
     def stop_hotspot(**kw):
-        nonlocal wifi_manager, flask_thread
+        nonlocal wifi_manager
         logger.info("[MENU] Stopping AP...")
         if wifi_manager:
             try:
                 wifi_manager.stop_ap()
             except Exception as e:
                 logger.error("Error stopping AP: %s", e)
+        # Il server web non ha senso (e non e' sicuro) senza l'AP: si ferma
+        # insieme, cosi' non resta mai in ascolto senza il suo perimetro.
+        _stop_flask()
         sb.set_wifi(False)
         sb.set_title("Liquorice")
         legend.set_text("\u25c0 menu  \u25b6 backup")
@@ -552,6 +566,9 @@ def main():
             epdconfig.CS_PIN,
         )
     epd = EPD()
+    if not args.mock:
+        # Senza timeout, un pannello piantato con BUSY alto blocca il main loop.
+        install_busy_timeout(epd)
     run_interactive(epd)
 
 

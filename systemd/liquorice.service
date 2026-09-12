@@ -9,6 +9,12 @@ WorkingDirectory=/home/raspberry/liquorice-backup
 Environment=PYTHONPATH=/home/raspberry/liquorice-backup/software
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/raspberry/liquorice-backup/.venv/bin/python /home/raspberry/liquorice-backup/software/main.py
+# La striscia LED (rpi_ws281x su GPIO18/pin 12) pilota il PWM via DMA e deve
+# aprire /dev/mem in scrittura: senza queste due capability ws2811_init
+# fallisce con "mmap() failed" e il LED resta spento. Servono entrambe, con una
+# sola la libreria va in segmentation fault. Il servizio resta comunque
+# non-root: sono l'alternativa piu' contenuta a User=root.
+AmbientCapabilities=CAP_SYS_RAWIO CAP_DAC_OVERRIDE
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT

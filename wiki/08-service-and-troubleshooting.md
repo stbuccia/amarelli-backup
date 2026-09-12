@@ -66,6 +66,19 @@ sudo systemctl restart liquorice
 ### The LED strip does nothing
 
 - The LED needs GPIO access. The installer adds your user to the `gpio` group, but that only takes effect after a reboot or a fresh login.
+- Under the `liquorice` service the strip also needs to write to `/dev/mem` (the WS2812B driver drives PWM through DMA). The unit file grants it with
+
+  ```
+  AmbientCapabilities=CAP_SYS_RAWIO CAP_DAC_OVERRIDE
+  ```
+
+  Both are required: with only one of them the library crashes with a segmentation fault. If the line is missing you get this in the log, and the box works but stays dark:
+
+  ```
+  LED disabilitato: permessi /dev/mem insufficienti (ws2811_init failed with code -5 (mmap() failed))
+  ```
+
+  After editing the unit, run `sudo systemctl daemon-reload && sudo systemctl restart liquorice`.
 - Test it directly (may need `sudo`):
 
   ```bash
@@ -89,7 +102,7 @@ sudo systemctl restart liquorice
 ### The buttons do the wrong thing
 
 - Check the wiring against [Wiring and assembly](02-wiring-and-assembly.md):
-  Up = BCM 13, Down = BCM 6, Left = BCM 5, Right = BCM 19, other side to ground
+  Up = BCM 5, Down = BCM 6, Confirm/Right = BCM 13, Back/Left = BCM 19, other side to ground
 - Test which button is which:
 
   ```bash
@@ -111,6 +124,6 @@ sudo systemctl restart liquorice
 ### Cannot reach the web page
 
 - Get the IP from *WiFi > Show IP*, then open `http://<box-ip>:5000`.
-- On a network you do not control, use *WiFi > Start hotspot*, join the box's own network, then open the page
+- The web page only runs while the box's hotspot is on. Use *WiFi > Start AP + Web server*, join the box's own network, then open the page
 
 If you started at chapter 1 and worked through to here, you now have a working Liquorice Backup box.

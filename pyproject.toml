@@ -12,6 +12,7 @@ dependencies = [
     "xxhash",
     "nmcli",
     "flask",
+    "werkzeug",
     "gpiozero",
     "Pillow>=10.1",
 ]

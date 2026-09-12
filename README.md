@@ -20,7 +20,9 @@ You put your camera microSD card in the box and it backups your photo copying th
 
 You can check bu yourself in this demo video:
 
-...
+https://github.com/user-attachments/assets/demo.mp4
+
+Or watch/download it directly from the repo: [wiki/assets/video/demo.mp4](wiki/assets/video/demo.mp4)
 
 ## Documentation
 

@@ -39,22 +39,22 @@ Wire and solder  3.3 V pin (like 1) and GND like (39) along the `+`/`-` rails so
 
 ## Buttons
 
-There are four buttons: **Back (Left)**, **Down**, **Up**, and **Confirm (Right)**. Wire one side of each button to its BCM pin following the table, and the other side to the `-` column of the board. Place them in the **row 2**, as shown in the pictures below
+There are four buttons: **Up**, **Down**, **Confirm (Right)**, and **Back (Left)**. Wire one side of each button to its BCM pin following the table, and the other side to the `-` column of the board. Place them in the **row 2**, as shown in the pictures below
 
 | Button | BCM | Physical pin | Column  of the board |
 |---|---|---|---|
-| Left | 5 | 29 | 4 and 6|
+| Up | 5 | 29 | 4 and 6|
 | Down | 6 | 31 | 9 and 11|
-| Up | 13 | 33 | 20 and 22 |
-| Right | 19 | 35 | 25 and 27|
+| Confirm (Right) | 13 | 33 | 20 and 22 |
+| Back (Left) | 19 | 35 | 25 and 27|
 
 These are the pins the software reads.
 
 ![Buttons: overview](assets/images/wiring/buttons1.JPG)
-*The left and down buttons.*
+*The up and down buttons.*
 
 ![Buttons: detail](assets/images/wiring/buttons2.JPG)
-*The up and right buttons*
+*The confirm and back buttons*
 
 ## Card reader (external, SPI)
 

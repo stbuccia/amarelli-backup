@@ -30,8 +30,7 @@ MENU_TREE = [
     MenuItem(
         "WiFi",
         children=[
-            MenuItem("Start hotspot", action=lambda: bus.emit("hotspot:start")),
-            MenuItem("Start web server", action=lambda: bus.emit("server:start")),
+            MenuItem("Start AP + Web server", action=lambda: bus.emit("hotspot:start")),
             MenuItem("Show IP", action=lambda: bus.emit("wifi:show_ip")),
             MenuItem("Reset WiFi", action=lambda: bus.emit("wifi:reset")),
         ],

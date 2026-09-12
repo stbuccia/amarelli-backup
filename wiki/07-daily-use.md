@@ -15,7 +15,7 @@ If there is no card and nothing waiting in the cache, the screen shows `Waiting 
 
 ## The buttons
 
-There are four buttons, from left to right they are: **Back/Left**, **Down**, **Up**, **Confirm/Right**.
+There are four buttons, from left to right they are: **Up**, **Down**, **Confirm/Right**, **Back/Left**.
 
 In the menu:
 
@@ -33,10 +33,9 @@ During a backup:
 Press Left from the main screen to open the menu:
 
 - **WiFi**
-  - *Start hotspot* : the box makes its own Wi-Fi network, so you can reach the web page when there is no other network
-  - *Start web server*: start the settings web page
+  - *Start AP + Web server* : the box makes its own Wi-Fi network and starts the settings web page on it, so you can reach it when there is no other network. For security, the web page is only ever reachable through this hotspot, never on your regular Wi-Fi
   - *Show IP* : show the box's IP address
-  - *Reset WiFi* : stop the hotspot / clear the Wi-Fi setup
+  - *Reset WiFi* : stop the hotspot and the web page / clear the Wi-Fi setup
 - **Mode**
   - *Upload only* : copy photos up; never delete on the remote
   - *Mirroring* : make the remote match the source (can delete remote files)
@@ -93,8 +92,8 @@ When you shut the lid, the magnet trips the reed switch and the screen sleeps to
 
 ## The web page
 
-The box runs a small web page. From a phone or computer on the same network: **`http://<box-ip>:5000`**
+The box runs a small web page, but only while its hotspot is on: **`http://<box-ip>:5000`**
 
-Find the box's IP with *WiFi > Show IP*. If you are away from your usual network, use *WiFi > Start hotspot* to make the box create its own network, connect to it, then open the page, and also from the web page you can set the wifi network.
+Use *WiFi > Start AP + Web server* to turn on both together, connect your phone or computer to the box's own Wi-Fi network, find the IP with *WiFi > Show IP* (it stays on screen until you change screen again), then open the page. From there you can also set the box's regular Wi-Fi network. When you are done, *WiFi > Reset WiFi* stops both the hotspot and the web page, so nothing is left listening.
 
 Next: [Run as a service and troubleshooting](07-service-and-troubleshooting.md).

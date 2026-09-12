@@ -1,4 +1,5 @@
 import logging
+import time
 from PIL import Image, ImageDraw, ImageFont
 from contextlib import nullcontext
 
@@ -146,6 +147,7 @@ class BackupStatusView:
         self._stats = None
         self._error_msg = ""
         self._active_phase = None
+        self._paused_phase = None
         self._bus = bus
         if bus:
             bus.on("backup:state", self._on_backup_state)
@@ -169,6 +171,18 @@ class BackupStatusView:
         self.progress_total = total
         self.progress_current = 0
 
+    def resume_phase(self, total: int, absolute: bool):
+        """Riprende la barra dal punto in cui era prima della pausa.
+
+        In CACHING il totale e' assoluto (tutti i file della scheda) e non cambia
+        con la pausa. Nelle altre fasi il totale che arriva e' il residuo
+        (pending da uploadare, file da cancellare o da eliminare dalla cache),
+        quindi va risommato a quelli gia' fatti per non ripartire da zero.
+        """
+        done = self.progress_current
+        self.progress_total = total if absolute else total + done
+        self.progress_current = min(done, self.progress_total)
+
     def inc_progress(self):
         if self.progress_current < self.progress_total:
             self.progress_current += 1
@@ -182,8 +196,14 @@ class BackupStatusView:
             self._active_phase = state
         elif state == State.IDLE:
             self._active_phase = None
+        if state == State.PAUSED:
+            # Fase in cui si e' fermato: al resume la barra riparte da qui.
+            self._paused_phase = self._active_phase
         if state == State.COMPLETED and up_to_date:
-            self.status = "Already up to date"
+            # Giro a vuoto (nessun file copiato, caricato, cancellato o
+            # eliminato): si resta sulla schermata iniziale invece di mostrare
+            # un riepilogo vuoto.
+            self.status = "Ready"
         else:
             self.status = {
                 State.CACHING: "Caching files...",
@@ -204,16 +224,26 @@ class BackupStatusView:
             self.progress_current = 0
             self._stats = None
             self._error_msg = ""
+            self._paused_phase = None
         if state in (State.IDLE, State.COMPLETED, State.PAUSED, State.ERROR):
             self.refresh()
-        if state in (State.COMPLETED, State.ERROR) and stats is not None:
-            self._stats = stats
-            self._error_msg = error
-        elif state == State.IDLE:
+        if self.status == "Ready":
+            # Schermata iniziale: nessun residuo di barra o riepilogo.
             self._stats = None
             self._error_msg = ""
+            self.progress_total = 0
+            self.progress_current = 0
+            self.current_file = ""
+            self._paused_phase = None
+        elif state in (State.COMPLETED, State.ERROR) and stats is not None:
+            self._stats = stats
+            self._error_msg = error
         if total:
-            self.set_phase(total)
+            if state == self._paused_phase:
+                self.resume_phase(total, absolute=(state == State.CACHING))
+            else:
+                self.set_phase(total)
+            self._paused_phase = None
         legend_text = {
             State.IDLE: "\u25c0 menu  \u25b6 backup",
             State.CACHING: "\u25c0 pause",
@@ -237,7 +267,11 @@ class BackupStatusView:
 
     def _on_cache_file(self, path, processed=0, **kw):
         self.current_file = path.rsplit("/", 1)[-1]
-        self.progress_current = min(processed, self.progress_total)
+        # max(): dopo un resume la scansione riparte dal primo file della
+        # scheda, ma la barra non deve tornare indietro.
+        self.progress_current = max(
+            self.progress_current, min(processed, self.progress_total)
+        )
         self._bus.emit("ui:redraw")
 
     def _on_file_uploaded(self, file=None, **kw):
@@ -284,7 +318,11 @@ class BackupStatusView:
         draw.text((x, y), f"SD: {sd_label}", font=font, fill=0)
         y += line_h
 
-        if self.progress_total > 0 and self.status != "Done":
+        # Schermata Ready: solo Status, WiFi e SD, niente barra ne' conteggi.
+        if self.status == "Ready":
+            return
+
+        if self.progress_total > 0 and self.status not in ("Done", "Error"):
             bar_y = y
             bar_h = max(4, th - 4)
             bar_w = width - 2 * x
@@ -312,13 +350,18 @@ class BackupStatusView:
             elif self.status == "Pruning cache...":
                 per_phase = f"Pruned: {self.progress_current}/{self.progress_total}"
             elif self.status in ("Retrying...", "Paused"):
-                # Pausa/retry mantengono la barra ma non il conteggio x/tot.
-                per_phase = {
+                # In pausa/retry si tiene il conteggio raggiunto, con
+                # l'etichetta della fase in cui si e' fermato.
+                label = {
                     State.CACHING: "Cached",
                     State.UPLOADING: "Uploaded",
                     State.REMOTE_CLEANUP: "Cleaned",
                     State.PRUNING: "Pruned",
                 }.get(self._active_phase, "")
+                if label:
+                    per_phase = (
+                        f"{label}: {self.progress_current}/{self.progress_total}"
+                    )
 
             if per_phase and y + line_h <= height - bottom_margin - 2:
                 draw.text((x, y), per_phase, font=font, fill=0)
@@ -326,29 +369,25 @@ class BackupStatusView:
             if self.status in ("Caching files...", "Uploading...", "Cleaning remote...", "Pruning cache...", "Retrying...", "Paused"):
                 return
 
-        if self.status in ("Done", "Error", "Already up to date") and self._stats is not None:
+        if self.status in ("Done", "Error") and self._stats is not None:
             s = self._stats
-            if self.status == "Already up to date":
-                draw.text((x, y), "No new files", font=font, fill=0)
-                y += line_h
-                if s.get("cached_ok", 0) or s.get("uploaded_ok", 0):
-                    draw.text((x, y), f"Cached: {s.get('cached_ok',0)}  Up: {s.get('uploaded_ok',0)}", font=font, fill=0)
-                    y += line_h
-                if y + line_h <= height - bottom_margin - 2:
-                    draw.text((x, y), f"SD: {sd_label}  WiFi: {wifi_label}", font=font, fill=0)
-                return
             if self.status == "Done":
-                draw.text((x, y), f"Cached: {s.get('cached_ok', self.cached_count)}", font=font, fill=0)
-                y += line_h
-                if y + line_h > height - bottom_margin - 2:
-                    return
-                draw.text((x, y), f"Uploaded: {s.get('uploaded_ok', self.uploaded_count)}", font=font, fill=0)
-                y += line_h
-                if s.get("remote_deleted", 0) and y + line_h <= height - bottom_margin - 2:
-                    draw.text((x, y), f"Removed: {s.get('remote_deleted',0)}", font=font, fill=0)
+                # Riepilogo su due righe fisse:
+                #   Cached / Pruned   (copiati / eliminati dalla cache)
+                #   Uploaded / Removed (caricati / rimossi dal cloud)
+                cached = s.get("cached_ok", self.cached_count)
+                pruned = s.get("pruned", 0)
+                uploaded = s.get("uploaded_ok", self.uploaded_count)
+                removed = s.get("remote_deleted", 0)
+                stats_lines = [
+                    f"Cached: {cached} / Pruned: {pruned}",
+                    f"Uploaded: {uploaded} / Removed: {removed}",
+                ]
+                for line in stats_lines:
+                    if y + line_h > height - bottom_margin - 2:
+                        break
+                    draw.text((x, y), line, font=font, fill=0)
                     y += line_h
-                if s.get("pruned", 0) and y + line_h <= height - bottom_margin - 2:
-                    draw.text((x, y), f"Pruned: {s.get('pruned',0)}", font=font, fill=0)
                 return
             if self.status == "Error":
                 co = s.get("cached_ok", 0)
@@ -371,7 +410,7 @@ class BackupStatusView:
 
 class MenuView:
     MARGIN_X = 4
-    LINE_SPACING = 2
+    LINE_SPACING = 1
 
     def __init__(self, menu, bus=None):
         self._menu = menu
@@ -433,18 +472,48 @@ class MenuView:
 class Display:
     WIDTH = 250
     HEIGHT = 122
+    # Un refresh vero dell'e-ink dura ~1-2s. Se init+display tornano subito, il
+    # pannello non ha eseguito nulla (BUSY mai alto): tipico di alimentazione o
+    # cablaggio del display che non fanno contatto.
+    MIN_REFRESH_SECONDS = 0.3
+    # Ogni quanti render riprovare il recupero quando il pannello e' muto.
+    RECOVERY_EVERY = 20
+    # Quanto considerare ancora "in refresh" dopo la fine, per coprire il
+    # ritardo con cui gpiozero consegna gli eventi dei pulsanti.
+    REFRESH_GUARD_SECONDS = 0.35
 
-    def __init__(self, epd, font, io_lock=None):
+    def __init__(self, epd, font, io_lock=None, health_check=True):
         self._epd = epd
         self._font = font
         self._initialized = False
         self._io_lock = io_lock
         self._suspended = False
         self._last_frame = None
+        self._health_check = health_check
+        self._panel_ok = True
+        self._silent_renders = 0
+        self._refreshing = False
+        self._refresh_ended = 0.0
 
     @property
     def font(self):
         return self._font
+
+    @property
+    def refreshing(self):
+        """True mentre l'e-ink sta aggiornando: in quella finestra i pin dei
+        pulsanti raccolgono disturbi.
+
+        La finestra si estende oltre la fine del refresh perche' il debounce di
+        gpiozero consegna l'evento con qualche decina di ms di ritardo.
+        """
+        if self._refreshing:
+            return True
+        return (time.monotonic() - self._refresh_ended) < self.REFRESH_GUARD_SECONDS
+
+    @property
+    def panel_ok(self):
+        return self._panel_ok
 
     def _lock(self):
         return self._io_lock or nullcontext()
@@ -500,19 +569,118 @@ class Display:
         legend.render(draw, self._font, self.WIDTH, self.HEIGHT)
         return img
 
+    def _push(self, buffer):
+        """Invia il frame con la sequenza completa e ritorna la durata del refresh.
+
+        Non si usa init_fast()/display_fast(): su questo pannello la sequenza
+        "fast" viene ignorata e lascia il controller piantato con BUSY alto,
+        mentre il guadagno era minimo (1.8s contro i ~2s del refresh completo).
+        """
+        started = time.monotonic()
+        self._refreshing = True
+        try:
+            self._epd.init()
+            self._epd.display(buffer)
+        finally:
+            self._refreshing = False
+            self._refresh_ended = time.monotonic()
+        return time.monotonic() - started
+
+    def _hard_reset(self):
+        """Reset lungo sulla linea RST: sblocca il pannello dopo un refresh fallito.
+
+        Il reset del driver Waveshare tiene RST basso solo 2ms e non basta quando
+        il controller si e' piantato.
+        """
+        try:
+            from waveshare_epd import epdconfig
+        except ImportError:
+            return False
+        try:
+            epdconfig.digital_write(epdconfig.RST_PIN, 1)
+            epdconfig.delay_ms(50)
+            epdconfig.digital_write(epdconfig.RST_PIN, 0)
+            epdconfig.delay_ms(300)
+            epdconfig.digital_write(epdconfig.RST_PIN, 1)
+            epdconfig.delay_ms(50)
+            return True
+        except Exception as error:
+            logger.warning("Reset hardware del display non riuscito: %s", error)
+            return False
+
+    def _recover(self, buffer):
+        """Tenta un reset lungo + refresh completo. True se il pannello risponde."""
+        if not self._hard_reset():
+            return False
+        try:
+            elapsed = self._push(buffer)
+        except Exception as error:
+            logger.warning("Refresh di recupero fallito: %s", error)
+            return False
+        return elapsed >= self.MIN_REFRESH_SECONDS
+
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
         self._last_frame = img
         with self._lock():
             if self._suspended:
                 return
-            if not self._initialized:
-                self._epd.init()
-                self._epd.display(self._epd.getbuffer(img))
-                self._initialized = True
-            else:
-                self._epd.init_fast()
-                self._epd.display_fast(self._epd.getbuffer(img))
+            buffer = self._epd.getbuffer(img)
+            elapsed = self._push(buffer)
+            self._initialized = True
+            if not self._health_check:
+                return
+            if elapsed >= self.MIN_REFRESH_SECONDS:
+                if not self._panel_ok:
+                    logger.info("Display di nuovo operativo")
+                self._panel_ok = True
+                self._silent_renders = 0
+                return
+            self._on_silent_refresh(buffer)
+
+    def _on_silent_refresh(self, buffer):
+        """Il pannello ha ignorato il frame: prova a recuperarlo e avvisa."""
+        self._silent_renders += 1
+        if self._panel_ok:
+            logger.warning(
+                "Il display non ha eseguito il refresh (BUSY mai attivo): "
+                "provo un reset hardware"
+            )
+        elif self._silent_renders % self.RECOVERY_EVERY:
+            return
+        if self._recover(buffer):
+            logger.info("Display recuperato con il reset hardware")
+            self._panel_ok = True
+            self._silent_renders = 0
+            return
+        if self._panel_ok:
+            logger.error(
+                "Il display e-ink non risponde: l'immagine a schermo resta quella "
+                "vecchia. Controlla alimentazione (3.3V/GND) e i fili DIN, CLK, "
+                "CS, DC, RST e BUSY; poi togli e ridai corrente alla scatola."
+            )
+        self._panel_ok = False
+
+
+def install_busy_timeout(epd, timeout=20.0):
+    """Limita l'attesa su BUSY: senza timeout un pannello piantato blocca la UI."""
+    try:
+        from waveshare_epd import epdconfig
+    except ImportError:
+        return
+
+    def read_busy():
+        started = time.monotonic()
+        while epdconfig.digital_read(epd.busy_pin) == 1:
+            if time.monotonic() - started > timeout:
+                logger.error(
+                    "e-Paper BUSY alto da oltre %.0fs: pannello bloccato, proseguo",
+                    timeout,
+                )
+                return
+            epdconfig.delay_ms(10)
+
+    epd.ReadBusy = read_busy
 
 
 def setup_ui_handlers(
@@ -557,5 +725,5 @@ def setup_ui_handlers(
     return active_view
 
 
-def load_font(size=15):
+def load_font(size=11):
     return ImageFont.load_default(size)

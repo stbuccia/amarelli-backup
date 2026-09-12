@@ -205,7 +205,18 @@ if [[ ! -f /etc/udev/rules.d/99-gpio.rules ]]; then
 fi
 
 printf 'Installing Liquorice startup service...\n'
-sudo install -m 0644 "$PROJECT_DIR/systemd/liquorice.service" "$SYSTEMD_DIR/liquorice.service"
+# Il unit file nel repository usa /home/raspberry/liquorice-backup come esempio:
+# qui viene riscritto con l'utente e il percorso reali, cosi' il servizio parte
+# anche se il progetto e' stato clonato in una cartella con un altro nome.
+unit_file=$(mktemp)
+sed -e "s|^User=.*|User=$USER|" \
+    -e "s|^WorkingDirectory=.*|WorkingDirectory=$PROJECT_DIR|" \
+    -e "s|^Environment=PYTHONPATH=.*|Environment=PYTHONPATH=$PROJECT_DIR/software|" \
+    -e "s|^ExecStart=.*|ExecStart=$VENV_DIR/bin/python $PROJECT_DIR/software/main.py|" \
+    "$PROJECT_DIR/systemd/liquorice.service" >"$unit_file"
+sudo install -m 0644 "$unit_file" "$SYSTEMD_DIR/liquorice.service"
+rm -f "$unit_file"
+printf 'Service configured for %s in %s\n' "$USER" "$PROJECT_DIR"
 sudo install -m 0440 "$PROJECT_DIR/systemd/liquorice-sdcard.sudoers" "$SUDOERS_DIR/liquorice-sdcard"
 # 2026-09-08: watchdog hardware NON installato. Il BCM2835 esprime al massimo
 # ~16s di timeout, mentre la conf ne chiedeva 20; con RuntimeWatchdogSec attivo

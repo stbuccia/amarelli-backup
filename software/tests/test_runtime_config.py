@@ -520,6 +520,18 @@ class UploaderBackendTests(unittest.TestCase):
         self.assertIn("Cache", labels)
         self.assertIn("File type", labels)
 
+    def test_wifi_menu_unifies_ap_and_web_server(self):
+        # Per sicurezza il server web parte solo insieme all'access point:
+        # non deve esistere una voce che lo avvia da solo sulla rete normale.
+        from menu import MENU_TREE
+        wifi_item = next(item for item in MENU_TREE if item.label == "WiFi")
+        wifi_labels = [child.label for child in wifi_item.children]
+        self.assertIn("Start AP + Web server", wifi_labels)
+        self.assertNotIn("Start web server", wifi_labels)
+        self.assertNotIn("Start hotspot", wifi_labels)
+        self.assertIn("Show IP", wifi_labels)
+        self.assertIn("Reset WiFi", wifi_labels)
+
     def test_uploader_can_be_switched_via_web_config(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

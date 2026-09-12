@@ -86,7 +86,7 @@ More `config.json` keys you can set: `rclone_binary` (path to the program), `rcl
 If rclone is already set up on your PC, copy the config instead of doing it again:
 
 ```bash
-scp ~/.config/rclone/rclone.conf raspberry@liquorice.local:~/.config/rclone/rclone.conf
+scp ~/.config/rclone/rclone.conf <your-pi-user>@liquorice.local:~/.config/rclone/rclone.conf
 ```
 
 ## Retries and errors

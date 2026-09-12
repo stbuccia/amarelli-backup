@@ -17,7 +17,7 @@ cd ~/liquorice-backup
 - Creates a Python environment in `.venv` and installs the app into it
 - Downloads the Waveshare screen driver, fixes the reset pin to BCM 27, and copies it into the environment
 - Adds your user to the `gpio`, `kmem` and `spi` groups, so the LED strip and GPIO work
-- Installs and enables the `liquorice` service, so the box starts on its own
+- Installs and enables the `liquorice` service, so the box starts on its own. The unit is generated from `systemd/liquorice.service.in` with your username and the project folder, so no path or user is hardcoded
 
 ## Reboot
 

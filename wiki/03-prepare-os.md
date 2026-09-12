@@ -9,14 +9,14 @@ Here you put a working Raspberry Pi OS on the Pi's own microSD card (not the cam
 3. Choose the Pi's microSD card as the target
 4. Open the settings (the gear icon) before you write, and set:
    - **Hostname** -- for example `liquorice`. Then you can reach the box as `liquorice.local`.
-   - **Username** -- use `raspberry`. The service is set up for this user, so it keeps things simple. Pick your own password
+   - **Username** -- pick any username you like, with your own password. The installer adapts the service to whatever user you choose
    - **Enable SSH** -- turn it on, with password login
    - **Wi-Fi** -- enter your network name, password, and country
 5. Write the card and wait for it to finish.
 
-> The username matters. The auto-start service looks for the project in
-> `/home/raspberry/liquorice-backup`. If you use another username, you will have
-> to edit that path later (chapter 7).
+> The examples below use the username `raspberry`: replace it with yours. Nothing
+> in the project depends on it, the service is generated at install time from the
+> user and the folder you install from.
 
 ## 2. First boot and login
 
@@ -28,7 +28,7 @@ Here you put a working Raspberry Pi OS on the Pi's own microSD card (not the cam
    ssh raspberry@liquorice.local
    ```
 
-   If `liquorice.local` does not work, find the Pi's IP address in your router and use it: `ssh raspberry@<ip>`
+   Use your own username instead of `raspberry`. If `liquorice.local` does not work, find the Pi's IP address in your router and use it: `ssh <user>@<ip>`
 
 ## 3. Update the system
 
@@ -52,7 +52,7 @@ python3 --version
 
 ## 5. Get the project
 
-Clone the project into your home folder, so it ends up at `/home/raspberry/liquorice-backup`:
+Clone the project into your home folder, so it ends up at `~/liquorice-backup`:
 
 ```bash
 cd ~

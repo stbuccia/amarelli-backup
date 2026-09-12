@@ -32,7 +32,7 @@ MENU_TREE = [
         children=[
             MenuItem("Start AP + Web server", action=lambda: bus.emit("hotspot:start")),
             MenuItem("Show IP", action=lambda: bus.emit("wifi:show_ip")),
-            MenuItem("Reset WiFi", action=lambda: bus.emit("wifi:reset")),
+            MenuItem("Stop AP", action=lambda: bus.emit("wifi:reset")),
         ],
     ),
     MenuItem(
@@ -130,13 +130,17 @@ class Menu:
         parent_items, parent_idx = self._stack[-1]
         return f"{self._title} \u203a {parent_items[parent_idx].label}"
 
-    def up(self):
+    def up(self) -> bool:
         if self._selected > 0:
             self._selected -= 1
+            return True
+        return False
 
-    def down(self):
+    def down(self) -> bool:
         if self._selected < len(self._items) - 1:
             self._selected += 1
+            return True
+        return False
 
     def enter(self):
         item = self.current
@@ -164,11 +168,16 @@ class Menu:
 
     def handle_key_event(self, key):
         if key in ("UP", "w"):
-            self.up()
-            self._bus.emit("menu:changed")
+            # Niente refresh e-ink (costoso, ~1-2s e bloccante) se si e' gia'
+            # in cima alla lista: senza questo controllo, tenere premuto UP
+            # a inizio lista genera un ridisegno completo a vuoto per ogni
+            # pressione, accumulando eventi e dando l'impressione di un
+            # blocco dell'interfaccia.
+            if self.up():
+                self._bus.emit("menu:changed")
         elif key in ("DOWN", "s"):
-            self.down()
-            self._bus.emit("menu:changed")
+            if self.down():
+                self._bus.emit("menu:changed")
         elif key in ("RIGHT", "d", "\r", "\n"):
             self.enter()
             self._bus.emit("menu:changed")

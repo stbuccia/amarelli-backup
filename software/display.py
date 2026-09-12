@@ -72,12 +72,19 @@ class StatusBar:
     def __init__(self, title="Liquorice"):
         self._title = title
         self._wifi = True
+        self._wifi_ssid = None
 
     def set_title(self, title: str):
         self._title = title
 
-    def set_wifi(self, connected: bool):
+    def set_wifi(self, connected: bool, ssid: str | None = None):
         self._wifi = connected
+        # ssid=None su una connessione attiva non cancella il nome noto: e'
+        # solo "informazione non disponibile" (es. tasto mock 'i').
+        if not connected:
+            self._wifi_ssid = None
+        elif ssid is not None:
+            self._wifi_ssid = ssid
 
     def render(self, draw, font, width):
         y = 0
@@ -143,6 +150,7 @@ class BackupStatusView:
         self.progress_current = 0
         self.current_file = ""
         self._wifi = True
+        self._wifi_ssid = None
         self._sd_available = None
         self._stats = None
         self._error_msg = ""
@@ -306,6 +314,9 @@ class BackupStatusView:
         y += line_h
 
         wifi_label = "Connected" if self._wifi else "Disconnected"
+        ssid = getattr(self, "_wifi_ssid", None)
+        if self._wifi and ssid:
+            wifi_label = f"{wifi_label} ({ssid})"
         draw.text((x, y), f"WiFi: {wifi_label}", font=font, fill=0)
         y += line_h
 
@@ -704,14 +715,16 @@ def setup_ui_handlers(
         status_view.refresh()
         display.render_full(active_view[0], status_bar, legend)
 
-    def on_statusbar_update(title=None, wifi=None, **kw):
+    def on_statusbar_update(title=None, wifi=None, ssid=None, **kw):
         if title is not None:
             status_bar.set_title(title)
         if wifi is not None:
-            status_bar.set_wifi(wifi)
+            status_bar.set_wifi(wifi, ssid)
             for v in active_view:
                 if hasattr(v, "_wifi"):
                     v._wifi = wifi
+                    if hasattr(v, "_wifi_ssid"):
+                        v._wifi_ssid = status_bar._wifi_ssid
 
     def on_legend_update(text, **kw):
         legend.set_text(text)

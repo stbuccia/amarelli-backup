@@ -131,4 +131,43 @@ systemctl cat liquorice
 - Get the IP from *WiFi > Show IP*, then open `http://<box-ip>:5000`.
 - The web page only runs while the box's hotspot is on. Use *WiFi > Start AP + Web server*, join the box's own network, then open the page
 
+### "AP error!" on the screen when starting the hotspot
+
+- Read the log: `journalctl -u liquorice -e`. A generic `Error starting AP: Connection activation failed` almost always means the AP profile was built for an interface that does not exist. NetworkManager says it plainly:
+
+  ```bash
+  journalctl -u NetworkManager -e | grep "Liquorice AP"
+  # ... result="fail" reason="No suitable device found for this connection
+  # (device wlan0 not available because profile is not compatible with device
+  # (mismatching interface name))."
+  ```
+
+- The cause is `WIFI_INTERFACE` in `.env`. On the Raspberry Pi the Wi-Fi device is `wlan0`, not the `wlp0s...`/`wlx...` name a desktop Linux gives it. Check the real name and fix the file:
+
+  ```bash
+  nmcli -t -f DEVICE,TYPE device status | grep ':wifi$'
+  ```
+
+  The app now falls back to the first real Wi-Fi device and logs a warning (`Wi-Fi interface '...' not found ... using 'wlan0' instead`), but it is better to correct `.env` and restart the service.
+- The AP password must be at least 8 characters, otherwise WPA2 refuses it. A shorter one is rejected up front and the screen shows `AP PASSWORD < 8 CHAR!`.
+- `Error starting AP: [Errno 2] No such file or directory: 'iptables'` was a different case: the hotspot was really up (you could see the SSID) but the captive portal setup failed, so the screen said `AP error!` and the web server never started. Recent Raspberry Pi OS images only ship `nft`, not `iptables`. The app now uses whichever of the two is installed, and a failure here no longer stops the AP or the web page: it only logs `Captive portal redirect not active: open http://192.168.4.1:5000 by hand`.
+
+### The hotspot is on but you are not sure about the web page
+
+The legend at the bottom of the screen always reports it after *Start AP + Web server*:
+
+- `web 192.168.4.1:5000` : hotspot and web page both up, open that address
+- `AP ok - WEB ERROR!` : hotspot up, web server failed to start (usually port 5000 already in use). The reason is in `~/liquorice/liquorice.log` as `Error starting Flask on ...`
+- `AP error!` / `AP PASSWORD < 8 CHAR!` / `NO AP PASSWORD!` : the hotspot itself did not start, see above
+
+### The box has no network after "Stop AP"
+
+*Stop AP* tries the network that was active before the hotspot, then lets NetworkManager pick the best saved one, then tries every other saved profile (the ones the scan can see first). The screen shows the result: `WiFi: <network name>`, and the status screen reads `WiFi: Connected (<network name>)`. If none of them works you get the plain `◀ menu ▶ backup` legend, `WiFi: Disconnected`, and `Could not reconnect to any known Wi-Fi network` in the log. Check what the Pi has saved with:
+
+```bash
+nmcli -t -f TYPE,TIMESTAMP,NAME connection show | grep 802-11-wireless
+```
+
+If the network you expect is not there, add it from the web page while the hotspot is on.
+
 If you started at chapter 1 and worked through to here, you now have a working Liquorice Backup box.

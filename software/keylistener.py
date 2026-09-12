@@ -53,12 +53,13 @@ class GpioKeyListener(KeyListener):
     LEFT = 2
     RIGHT = 3
     BOUNCE_TIME_MS = 50
-    # Il refresh dell'e-ink induce sulla linea del DOWN (BCM6) treni di impulsi
-    # che gpiozero fonde in finte pressioni da 60 a 125 ms: generavano un loop di
-    # ridisegni. Fuori dal refresh la linea e' pulita (zero eventi in 20s), per
-    # cui il filtro si applica solo mentre il pannello sta lavorando: la
-    # pressione vale subito, senza dover tenere premuto.
-    MIN_PRESS_DURING_REFRESH_MS = 180
+    # Il refresh dell'e-ink induce sui pin dei tasti treni di impulsi che
+    # gpiozero fonde in finte pressioni (osservato specialmente sul DOWN,
+    # BCM6, ma il rumore si accoppia anche sugli altri pin durante il
+    # refresh): generavano un loop di ridisegni. Fuori dal refresh le linee
+    # sono pulite, per cui il filtro si applica solo mentre il pannello sta
+    # lavorando: la pressione vale subito, senza dover tenere premuto.
+    MIN_PRESS_DURING_REFRESH_MS = 120
 
     def __init__(self, pins=(None, None, None, None), display_busy=None):
         self._pins = {

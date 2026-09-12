@@ -13,6 +13,8 @@ Day to day, you use three things: the screen, the four buttons, and the LED stri
 
 If there is no card and nothing waiting in the cache, the screen shows `Waiting for SD card`.
 
+The main screen also reports the network: `WiFi: Connected (CasaWiFi)` with the name of the network the box is on, `WiFi: Connected (AP liquorice)` while its own hotspot is up, or `WiFi: Disconnected`.
+
 ## The buttons
 
 There are four buttons, from left to right they are: **Up**, **Down**, **Confirm/Right**, **Back/Left**.
@@ -33,9 +35,9 @@ During a backup:
 Press Left from the main screen to open the menu:
 
 - **WiFi**
-  - *Start AP + Web server* : the box makes its own Wi-Fi network and starts the settings web page on it, so you can reach it when there is no other network. For security, the web page is only ever reachable through this hotspot, never on your regular Wi-Fi
+  - *Start AP + Web server* : the box makes its own Wi-Fi network and starts the settings web page on it, so you can reach it when there is no other network. For security, the web page is only ever reachable through this hotspot, never on your regular Wi-Fi. The legend at the bottom tells you how it went: `web 192.168.4.1:5000` when both are up, `AP ok - WEB ERROR!` if the hotspot is up but the page is not
   - *Show IP* : show the box's IP address
-  - *Reset WiFi* : stop the hotspot and the web page / clear the Wi-Fi setup
+  - *Stop AP* : turn off the hotspot and the web page, and rejoin a Wi-Fi network the box already knows: first the one it was using before the hotspot, then any other saved network in range. The legend shows which one it landed on (`WiFi: <name>`). This does **not** forget any saved network or change your Wi-Fi setup (to forget a network, use *Forget* on the web page instead)
 - **Mode**
   - *Upload only* : copy photos up; never delete on the remote
   - *Mirroring* : make the remote match the source (can delete remote files)
@@ -94,6 +96,8 @@ When you shut the lid, the magnet trips the reed switch and the screen sleeps to
 
 The box runs a small web page, but only while its hotspot is on: **`http://<box-ip>:5000`**
 
-Use *WiFi > Start AP + Web server* to turn on both together, connect your phone or computer to the box's own Wi-Fi network, find the IP with *WiFi > Show IP* (it stays on screen until you change screen again), then open the page. From there you can also set the box's regular Wi-Fi network. When you are done, *WiFi > Reset WiFi* stops both the hotspot and the web page, so nothing is left listening.
+Use *WiFi > Start AP + Web server* to turn on both together, connect your phone or computer to the box's own Wi-Fi network, find the IP with *WiFi > Show IP* (it stays on screen until you change screen again), then open the page. From there you can also set the box's regular Wi-Fi network. When you are done, *WiFi > Stop AP* stops the hotspot and the web page, and tries to rejoin a previously known network if one is in range.
+
+The box only has one Wi-Fi radio, so it cannot run the hotspot and join your regular network at the same time: connecting to a new network from the web page turns the hotspot off first. If the new network's password is wrong or it cannot be reached, the box brings its own hotspot back automatically, so it is never left with neither the hotspot nor a working connection.
 
 Next: [Run as a service and troubleshooting](07-service-and-troubleshooting.md).

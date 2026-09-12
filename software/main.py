@@ -88,6 +88,14 @@ def run_interactive(epd):
 
     config = Config(bus=bus)
     setup_logger(config)
+    if not args.mock:
+        # Sicurezza al boot: se il profilo AP fosse rimasto su NetworkManager
+        # da un arresto anomalo, va rimosso subito, prima che possa essere
+        # scelto automaticamente al posto della rete Wi-Fi normale.
+        try:
+            WiFiManager(config).disable_ap_autostart()
+        except Exception as e:
+            logger.warning("Could not clear leftover AP profile at boot: %s", e)
     # LED creato dopo setup_logger: cosi' un eventuale "LED disabilitato"
     # (permessi /dev/mem) finisce in liquorice.log e non solo sullo stderr
     # del servizio.
@@ -332,6 +340,9 @@ def _loop(
         leg = legend._text
         title = sb._title
         wifi_s = "ON" if getattr(sb, "_wifi", True) else "OFF"
+        ssid_s = getattr(sb, "_wifi_ssid", None)
+        if wifi_s == "ON" and ssid_s:
+            wifi_s = f"{wifi_s}({ssid_s})"
         if active_view[0] is status_view:
             bv = status_view
             state_name = getattr(getattr(backup, "state", None), "name", "?")
@@ -418,6 +429,25 @@ def _loop(
 
     sb.set_title("Liquorice")
     legend.set_text("\u25c0 menu  \u25b6 backup")
+
+    def _set_wifi_status(connected: bool, ssid: str | None = None) -> None:
+        """Stato Wi-Fi su barra e schermata Status, col nome della rete."""
+        sb.set_wifi(connected, ssid)
+        for view in (status_view, active_view[0]):
+            if hasattr(view, "_wifi"):
+                view._wifi = connected
+                if hasattr(view, "_wifi_ssid"):
+                    view._wifi_ssid = sb._wifi_ssid
+
+    # Rete al primo disegno: senza questo la schermata mostrava "Connected"
+    # anche senza rete, e non diceva mai a quale rete.
+    if not mock and config is not None:
+        try:
+            current_ssid = WiFiManager(config).get_current_ssid()
+            _set_wifi_status(bool(current_ssid), current_ssid)
+        except Exception as e:
+            logger.debug("Cannot read current Wi-Fi network: %s", e)
+
     status_view.refresh()
     display.render_full(active_view[0], sb, legend)
 
@@ -429,16 +459,27 @@ def _loop(
         nonlocal flask_thread, flask_server
         if flask_thread is not None and flask_thread.is_alive():
             logger.info("Flask already running")
-            return
+            return True
         from werkzeug.serving import make_server
 
-        app = create_app(wifi_manager=wm, db=db, bus=bus)
-        flask_server = make_server("0.0.0.0", 5000, app)
+        host = getattr(config, "flask_host", "0.0.0.0")
+        port = int(getattr(config, "flask_port", 5000))
+        try:
+            app = create_app(wifi_manager=wm, db=db, bus=bus)
+            flask_server = make_server(host, port, app)
+        except Exception as e:
+            # Porta occupata, errore nell'app: va detto, non ingoiato, o il
+            # box mostra "AP pronto" con una pagina che non risponde.
+            logger.error("Error starting Flask on %s:%s: %s", host, port, e)
+            flask_server = None
+            flask_thread = None
+            return False
         flask_thread = threading.Thread(
             target=flask_server.serve_forever, daemon=True
         )
         flask_thread.start()
-        logger.info("Flask avviato su 0.0.0.0:5000")
+        logger.info("Flask avviato su %s:%s", host, port)
+        return True
 
     def _stop_flask():
         nonlocal flask_thread, flask_server
@@ -467,18 +508,37 @@ def _loop(
                 display.render_full(active_view[0], sb, legend)
                 return
             wifi_manager.start_ap(ssid, password)
-            sb.set_wifi(True)
-            sb.set_title(f"AP: {ssid}")
-            legend.set_text(f"IP: {WiFiManager.AP_IP}:5000")
+        except ValueError as e:
+            # Password troppo corta o assente: l'errore e' nel .env, non nella
+            # rete, e va distinto da un fallimento di NetworkManager.
+            logger.error("Invalid AP configuration: %s", e)
+            legend.set_text("AP PASSWORD < 8 CHAR!")
             display.render_full(active_view[0], sb, legend)
-            logger.info("AP '%s' started on %s", ssid, wifi_manager.AP_IP)
+            return
         except Exception as e:
             logger.error("Error starting AP: %s", e)
             legend.set_text("AP error!")
             display.render_full(active_view[0], sb, legend)
             return
 
-        _start_flask(wifi_manager)
+        _set_wifi_status(True, f"AP {ssid}")
+        sb.set_title(f"AP: {ssid}")
+        logger.info("AP '%s' started on %s", ssid, wifi_manager.AP_IP)
+
+        # Lo stato del server web va sempre mostrato: l'AP acceso da solo non
+        # serve a niente se la pagina non risponde, e prima non c'era modo di
+        # accorgersene dal box.
+        port = int(getattr(config, "flask_port", 5000))
+        if _start_flask(wifi_manager):
+            legend.set_text(f"web {WiFiManager.AP_IP}:{port}")
+            if not wifi_manager.captive_portal_ready:
+                logger.warning(
+                    "Captive portal redirect not active: open http://%s:%s by hand",
+                    WiFiManager.AP_IP, port,
+                )
+        else:
+            legend.set_text("AP ok - WEB ERROR!")
+        display.render_full(active_view[0], sb, legend)
 
     bus.on("hotspot:start", start_hotspot)
     bus.on("wifi:connect", lambda **kw: start_hotspot())
@@ -495,17 +555,26 @@ def _loop(
     def stop_hotspot(**kw):
         nonlocal wifi_manager
         logger.info("[MENU] Stopping AP...")
+        reconnected = None
         if wifi_manager:
             try:
+                # stop_ap riporta l'interfaccia sulla rete Wi-Fi che c'era
+                # prima dell'AP (o sulla piu' recente fra quelle salvate).
                 wifi_manager.stop_ap()
+                reconnected = wifi_manager.get_current_ssid()
             except Exception as e:
                 logger.error("Error stopping AP: %s", e)
         # Il server web non ha senso (e non e' sicuro) senza l'AP: si ferma
         # insieme, cosi' non resta mai in ascolto senza il suo perimetro.
         _stop_flask()
-        sb.set_wifi(False)
+        _set_wifi_status(bool(reconnected), reconnected)
         sb.set_title("Liquorice")
-        legend.set_text("\u25c0 menu  \u25b6 backup")
+        if reconnected:
+            logger.info("AP stopped, back on Wi-Fi '%s'", reconnected)
+            legend.set_text(f"WiFi: {reconnected}")
+        else:
+            logger.info("AP stopped, no Wi-Fi network available")
+            legend.set_text("\u25c0 menu  \u25b6 backup")
         display.render_full(active_view[0], sb, legend)
 
     bus.on("wifi:reset", stop_hotspot)

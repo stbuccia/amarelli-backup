@@ -151,6 +151,16 @@ systemctl cat liquorice
   The app now falls back to the first real Wi-Fi device and logs a warning (`Wi-Fi interface '...' not found ... using 'wlan0' instead`), but it is better to correct `.env` and restart the service.
 - The AP password must be at least 8 characters, otherwise WPA2 refuses it. A shorter one is rejected up front and the screen shows `AP PASSWORD < 8 CHAR!`.
 - `Error starting AP: [Errno 2] No such file or directory: 'iptables'` was a different case: the hotspot was really up (you could see the SSID) but the captive portal setup failed, so the screen said `AP error!` and the web server never started. Recent Raspberry Pi OS images only ship `nft`, not `iptables`. The app now uses whichever of the two is installed, and a failure here no longer stops the AP or the web page: it only logs `Captive portal redirect not active: open http://192.168.4.1:5000 by hand`.
+- Whenever the AP fails to start, the log also gets a diagnostic block written on purpose for the case where the box is unreachable and you can only read the card afterwards:
+
+  ```
+  AP diagnostics: interface=wlan0 (configured=wlan0, available=wlan0) firewall=nft(/usr/sbin/nft) openssl=/usr/bin/openssl
+  AP diagnostics [nmcli -f]: DEVICE  TYPE  STATE  CONNECTION | wlan0  wifi  disconnected  --
+  AP diagnostics [nmcli -f]: RUNNING  STATE  WIFI  WIFI-HW | running  connected  enabled  enabled
+  AP diagnostics [rfkill list]: ...
+  ```
+
+  `WIFI: disabled` or a soft-blocked radio in `rfkill` explains an activation failure that otherwise looks generic.
 
 ### The hotspot is on but you are not sure about the web page
 
@@ -159,6 +169,42 @@ The legend at the bottom of the screen always reports it after *Start AP + Web s
 - `web 192.168.4.1:5000` : hotspot and web page both up, open that address
 - `AP ok - WEB ERROR!` : hotspot up, web server failed to start (usually port 5000 already in use). The reason is in `~/liquorice/liquorice.log` as `Error starting Flask on ...`
 - `AP error!` / `AP PASSWORD < 8 CHAR!` / `NO AP PASSWORD!` : the hotspot itself did not start, see above
+
+### The screen freezes and the buttons do nothing after Start/Stop AP
+
+This was a real bug, fixed: the nmcli calls ran inside the button handler, so the main loop stopped reading buttons and stopped refreshing the e-ink until NetworkManager was done, which with several saved networks could take minutes. Now both entries work in a background thread: the screen shows `Starting AP...` / `Stopping AP...` immediately and the menu stays usable, and a second request while one is running is refused with `WiFi busy...`.
+
+If it still happens, the block is elsewhere. Check the log for the last line before the silence (`~/liquorice/liquorice.log`) and look for a slow SD mount or a stuck e-ink refresh (`journalctl -u liquorice -e`).
+
+### `ModuleNotFoundError: No module named 'PIL'` in mock mode
+
+You are running the Pi's `.venv` from another computer (typically with the card mounted under `/run/media/...`). That environment was built by the Pi's Python and its packages are in `lib/python3.11/`, invisible to a different Python version. Use a separate environment, as described in [Install the software](04-install-software.md#running-mock-mode-on-the-pis-card-from-a-pc), and do not run `./install.sh --mock` from the card: it would replace the Pi's packages with your PC's. The installer refuses this on purpose now.
+
+### "Connect" on the web page just kills the hotspot
+
+Fixed. The list used to send *Connect* with no password, so on a secured network NetworkManager answered `Secrets were required, but not provided` — but by then the hotspot was already down, and the restore failed too (`Disconnecting device failed`), leaving the box with neither the hotspot nor a network. Now a secured network that is not saved yet asks for its password in the list, the request is refused before the radio is touched if the password is missing, and `nmcli device disconnect` failing no longer stops the hotspot from coming back.
+
+### The screen freezes but the box keeps working, and the log says BUSY
+
+```
+display - ERROR :: e-Paper BUSY alto da oltre 20s: frame non confermato
+display - ERROR :: Il pannello e-ink non conferma il refresh (BUSY alto): l'immagine a schermo resta quella vecchia...
+```
+
+The e-ink controller is not releasing its BUSY line, so the panel never confirms a refresh. Backup, LED, buttons and the web page keep working: only the image is stale.
+
+What the app does: it abandons the wait after 20 seconds but always lets the driver finish its command sequence, then stops redrawing for 30 seconds, doubling that pause on every further failure up to 5 minutes. Two things it deliberately does *not* do:
+
+- it never interrupts the driver mid-sequence. Aborting the wait leaves the panel with half a frame, and the screen fills with black and white dots — worse than a stale image.
+- it never forces the panel with a reset or a power cycle in this state, for the same reason.
+
+The pause is what keeps the rest of the box responsive: before, every redraw waited the full 20 seconds, so each button press appeared to hang and the whole device felt dead. When the panel starts confirming again you get `Display di nuovo operativo` in the log and the screen resumes on the next redraw.
+
+If it never comes back, it is hardware side:
+
+- check the CS, DC, RST and BUSY wiring against [Wiring](02-wiring.md), BUSY is BCM 24
+- power-cycle the box completely (the panel keeps its state across a reboot of the Pi)
+- suspect the supply: Wi-Fi transmit peaks plus the LED strip can brown out a weak one, and the panel is the first thing to wedge
 
 ### The box has no network after "Stop AP"
 

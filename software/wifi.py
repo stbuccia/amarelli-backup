@@ -36,6 +36,16 @@ def _find_tool(name: str) -> str | None:
 class WiFiManager:
     AP_CONNECTION_NAME = "Liquorice AP"
     AP_IP = "192.168.4.1"
+    # Timeout delle operazioni nmcli che cambiano stato (attivazione di una
+    # connessione). Sono volutamente brevi: queste chiamate fanno aspettare
+    # l'utente davanti al box, e una rete che non risponde in 15 secondi non
+    # risponde nemmeno in 30.
+    NMCLI_TIMEOUT = 15
+    # Query di sola lettura: devono essere immediate.
+    NMCLI_QUERY_TIMEOUT = 10
+    # Quante reti salvate provare al massimo dopo lo stop dell'AP: senza un
+    # limite, con molti profili salvati lo Stop puo' durare minuti.
+    MAX_RECONNECT_ATTEMPTS = 3
     # Porta 80 -> Flask, porta 53 -> il mini DNS interno: cosi' il telefono
     # apre la pagina anche digitando l'IP senza porta.
     CAPTIVE_REDIRECTS = (("tcp", 80, 5000), ("udp", 53, 1053))
@@ -92,10 +102,22 @@ class WiFiManager:
         return available[0]
 
     def down_device(self):
+        """Stacca l'interfaccia prima di riconfigurarla.
+
+        E' un'ottimizzazione, non un requisito: NetworkManager sa attivare il
+        profilo AP anche da interfaccia connessa. Un errore qui non deve
+        interrompere l'avvio dell'AP: e' quello che accadeva quando 'nmcli
+        device disconnect' rispondeva "Disconnecting device failed" dopo un
+        tentativo di connessione fallito, e il ripristino dell'hotspot si
+        fermava lasciando il box senza AP e senza rete.
+        """
         try:
             nmcli.device.down(self.ifname)
         except NotExistException:
             log.debug("Device %s not active, skipping down", self.ifname)
+        except Exception as e:
+            log.warning("Could not bring %s down (%s): continuing anyway",
+                        self.ifname, e)
 
     def delete_connection(self):
         try:
@@ -221,23 +243,60 @@ class WiFiManager:
             return True
         return False
 
+    def _cert_paths(self) -> tuple[str, str, bool]:
+        """Dove tenere il certificato del captive portal.
+
+        Sotto la cartella dati del box (accanto a log e database) invece che
+        in /tmp: cosi' sopravvive ai riavvii e non va rigenerato. Se il
+        percorso non e' utilizzabile si torna a una cartella temporanea.
+        """
+        base = None
+        log_path = getattr(self.cfg, "log_path", None)
+        if log_path:
+            base = os.path.join(os.path.dirname(str(log_path)), "captive-tls")
+        if base:
+            try:
+                os.makedirs(base, exist_ok=True)
+                return (os.path.join(base, "cert.pem"),
+                        os.path.join(base, "key.pem"), True)
+            except OSError as e:
+                log.warning("Cannot use %s for the TLS cert: %s", base, e)
+        tmp = tempfile.mkdtemp(prefix="liquorice_tls_")
+        return os.path.join(tmp, "cert.pem"), os.path.join(tmp, "key.pem"), False
+
     def _ensure_cert(self) -> tuple[str, str]:
         openssl = _find_tool("openssl")
         if not openssl:
             raise FileNotFoundError("openssl not installed")
-        cert_dir = tempfile.mkdtemp(prefix="liquorice_tls_")
-        cert_path = os.path.join(cert_dir, "cert.pem")
-        key_path = os.path.join(cert_dir, "key.pem")
-        subprocess.run(
-            [openssl, "req", "-x509", "-newkey", "rsa:2048",
-             "-keyout", key_path, "-out", cert_path,
-             "-days", "3650", "-nodes",
-             "-subj", f"/CN={self.AP_IP}/O=Liquorice"],
-            capture_output=True, check=True,
+        cert_path, key_path, persistent = self._cert_paths()
+        self._cert_dir = None if persistent else os.path.dirname(cert_path)
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            log.info("Reusing TLS cert at %s", cert_path)
+            return cert_path, key_path
+
+        # Chiave EC invece di RSA 2048: su un Raspberry Pi Zero la
+        # generazione della RSA prendeva circa 25 secondi ad ogni avvio
+        # dell'AP (misurati nel log del box), tutti spesi con l'utente che
+        # aspetta davanti allo schermo. La curva P-256 e' immediata e va
+        # benissimo per un certificato self-signed usato solo per
+        # dirottare il captive portal.
+        common = ["-x509", "-keyout", key_path, "-out", cert_path,
+                  "-days", "3650", "-nodes",
+                  "-subj", f"/CN={self.AP_IP}/O=Liquorice"]
+        attempts = (
+            ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1"],
+            ["-newkey", "rsa:2048"],
         )
-        log.info("Self-signed TLS cert generated at %s", cert_path)
-        self._cert_dir = cert_dir
-        return cert_path, key_path
+        last_error = None
+        for key_args in attempts:
+            r = subprocess.run([openssl, "req"] + key_args + common,
+                               capture_output=True, text=True, check=False)
+            if r.returncode == 0:
+                log.info("Self-signed TLS cert generated at %s", cert_path)
+                return cert_path, key_path
+            last_error = (r.stderr or "").strip()
+            log.warning("openssl req failed with %s: %s", key_args[1], last_error)
+        raise RuntimeError(f"Cannot generate TLS certificate: {last_error}")
 
     def _start_captive_tls(self):
         cert_path, key_path = self._ensure_cert()
@@ -314,8 +373,11 @@ class WiFiManager:
                 self._tls_server_sock.close()
             except Exception:
                 pass
-        if hasattr(self, "_cert_dir"):
+        # Solo la cartella temporanea va rimossa: il certificato in cache
+        # serve al prossimo avvio (rigenerarlo costa secondi di attesa).
+        if getattr(self, "_cert_dir", None):
             shutil.rmtree(self._cert_dir, ignore_errors=True)
+            self._cert_dir = None
         log.info("Captive TLS server stopped")
 
     def _start_dns_server(self):
@@ -456,6 +518,14 @@ class WiFiManager:
             # AP fantasma, mai attivo ma pronto a confondere il prossimo
             # avvio (e le voci "AP attivo" del menu).
             self.delete_connection()
+            # down_device() ha gia' staccato la rete client: se l'AP non
+            # parte, il box resterebbe senza AP e senza rete (e senza modo
+            # di raggiungerlo). Si torna dove era prima di provare.
+            try:
+                self._reconnect_known_network()
+            except Exception as e:
+                log.warning("Could not restore the previous network after a "
+                            "failed AP start: %s", e)
             raise
         self.captive_portal_ready = self._start_captive_portal()
         log.info("Access point '%s' active on %s (captive portal: %s)",
@@ -531,7 +601,7 @@ class WiFiManager:
         try:
             r = subprocess.run(
                 ["nmcli", "device", "connect", self.ifname],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=self.NMCLI_TIMEOUT,
             )
             if r.returncode == 0:
                 log.info("Reconnected to a previously known network")
@@ -557,26 +627,33 @@ class WiFiManager:
         casa, studio, hotel), quindi si provano tutte quelle conosciute; le
         reti viste dalla scansione hanno priorita' perche' le altre
         farebbero solo perdere tempo in tentativi destinati a fallire.
+
+        La lista e' tagliata a MAX_RECONNECT_ATTEMPTS e usa la scansione in
+        cache (nessun rescan): questa funzione viene chiamata mentre l'utente
+        aspetta davanti al box, e un rescan piu' una decina di tentativi da 15
+        secondi trasformerebbero lo Stop in un'attesa di minuti.
         """
         candidates = [n for n in self._saved_connections_by_recency() if n != skip]
         try:
-            visible = {net["ssid"] for net in self.scan_networks() if net.get("ssid")}
+            visible = {net["ssid"] for net in self.scan_networks(rescan=False)
+                       if net.get("ssid")}
         except Exception:
             visible = set()
-        if not visible:
-            return candidates
-        # Il nome del profilo di solito coincide con l'SSID, ma non sempre:
-        # i profili non riconosciuti restano in coda invece di essere scartati.
-        in_range = [n for n in candidates if n in visible]
-        others = [n for n in candidates if n not in visible]
-        return in_range + others
+        if visible:
+            # Il nome del profilo di solito coincide con l'SSID, ma non
+            # sempre: i profili non riconosciuti restano in coda invece di
+            # essere scartati.
+            in_range = [n for n in candidates if n in visible]
+            others = [n for n in candidates if n not in visible]
+            candidates = in_range + others
+        return candidates[:self.MAX_RECONNECT_ATTEMPTS]
 
     def _activate_saved_connection(self, name: str) -> bool:
         """Attiva un profilo Wi-Fi salvato per nome (nmcli connection up)."""
         try:
             r = subprocess.run(
                 ["nmcli", "connection", "up", name, "ifname", self.ifname],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=self.NMCLI_TIMEOUT,
             )
             return r.returncode == 0
         except Exception:
@@ -606,9 +683,48 @@ class WiFiManager:
         except Exception:
             return []
 
-    def scan_networks(self) -> list[dict]:
+    def log_diagnostics(self) -> None:
+        """Scrive nel log lo stato della rete cosi' come lo vede il sistema.
+
+        Quando l'AP non parte il box non e' raggiungibile, quindi il log e'
+        l'unica traccia disponibile: meglio registrare subito interfacce,
+        stato di NetworkManager, rfkill e strumenti trovati, invece di
+        dedurre tutto da un "Connection activation failed".
+        """
+        backend, tool = self._firewall_backend()
+        log.error("AP diagnostics: interface=%s (configured=%s, available=%s) "
+                  "firewall=%s(%s) openssl=%s",
+                  self.ifname, getattr(self.cfg, "wifi_interface", "?"),
+                  ", ".join(self.list_wifi_interfaces()) or "none",
+                  backend, tool, _find_tool("openssl"))
+        commands = (
+            ["nmcli", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
+            ["nmcli", "-f", "RUNNING,STATE,WIFI,WIFI-HW", "general", "status"],
+            ["nmcli", "--version"],
+        )
+        rfkill = _find_tool("rfkill")
+        if rfkill:
+            commands += ([rfkill, "list", "wifi"],)
+        for cmd in commands:
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=self.NMCLI_QUERY_TIMEOUT)
+                output = (r.stdout or r.stderr or "").strip()
+            except Exception as e:
+                output = f"<{e}>"
+            log.error("AP diagnostics [%s]: %s",
+                      " ".join(os.path.basename(str(c)) for c in cmd[:2]),
+                      output.replace("\n", " | "))
+
+    def scan_networks(self, rescan: bool = True) -> list[dict]:
+        """Reti Wi-Fi viste dall'interfaccia.
+
+        rescan=False usa la lista che NetworkManager ha giu' in cache: e'
+        immediato, e serve dove l'utente sta aspettando (dopo lo stop
+        dell'AP). rescan=True e' per la pagina web, dove ha senso attendere.
+        """
         try:
-            output = nmcli.device.wifi(ifname=self.ifname, rescan=True)
+            output = nmcli.device.wifi(ifname=self.ifname, rescan=rescan)
         except Exception:
             try:
                 output = nmcli.device.wifi(ifname=self.ifname)
@@ -628,6 +744,30 @@ class WiFiManager:
                 })
         return unique
 
+    def password_required(self, ssid: str) -> bool:
+        """True se per questa rete serve una password che non abbiamo.
+
+        Serve a decidere *prima* di spegnere l'AP: la radio e' una sola, e un
+        tentativo destinato a fallire per "Secrets were required, but not
+        provided" costava all'utente la pagina web e la connessione al box.
+        Una rete gia' salvata non la richiede (i segreti sono nel profilo);
+        una rete aperta nemmeno. Se la scansione non dice nulla si lascia
+        provare, per non bloccare un caso legittimo.
+        """
+        try:
+            if ssid in self.get_saved_connections():
+                return False
+        except Exception:
+            pass
+        try:
+            for net in self.scan_networks(rescan=False):
+                if net.get("ssid") == ssid:
+                    security = (net.get("security") or "").strip()
+                    return bool(security)
+        except Exception as e:
+            log.debug("Cannot tell if '%s' needs a password: %s", ssid, e)
+        return False
+
     def connect_to_network(self, ssid: str, password: str = "") -> bool:
         # wlan0 e' una sola interfaccia fisica: non puo' essere AP e client
         # allo stesso tempo, quindi l'AP va fermato per provare la nuova
@@ -636,17 +776,35 @@ class WiFiManager:
         # si intervene fisicamente).
         # reconnect=False: si sta per tentare esplicitamente un'altra rete,
         # non ha senso lasciare che nmcli ne scelga un'altra nel frattempo.
+        if not password and self.password_required(ssid):
+            # Rete protetta e mai salvata: si fallisce subito, con l'AP
+            # ancora acceso, cosi' l'utente puo' rimediare dalla pagina.
+            log.error("Refusing to connect to '%s': password required but not provided", ssid)
+            return False
+
         ap_was_active = self.is_ap_active()
         try:
             self.stop_ap(reconnect=False)
         except Exception:
             pass
+        saved = []
+        try:
+            saved = self.get_saved_connections()
+        except Exception:
+            pass
+        if not password and ssid in saved:
+            # Profilo gia' presente: si riattiva quello, con i suoi segreti.
+            if self._activate_saved_connection(ssid):
+                log.info("Reconnected to saved network '%s'", ssid)
+                self._previous_ssid = ssid
+                return True
+            log.error("Failed to activate saved network '%s'", ssid)
         cmd = ["nmcli", "device", "wifi", "connect", ssid]
         if password:
             cmd += ["password", password]
         cmd += ["ifname", self.ifname]
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=self.NMCLI_TIMEOUT)
             if r.returncode == 0:
                 log.info("Connected to '%s'", ssid)
                 # Diventa la rete "di prima" per il prossimo ciclo AP:

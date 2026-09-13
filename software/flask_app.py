@@ -131,7 +131,8 @@ h1{font-size:1.2em}.card{background:#fff;border-radius:10px;padding:16px;margin-
             known_rows += f"""<div class="row">
 <div class="name">{_h(ssid)} <small>Saved</small></div>
 <div class="actions">
-<form method="post" action="/connect" style="display:inline">
+<form method="post" action="/connect" style="display:inline"
+onsubmit="return confirm('Connect to &quot;{_h(ssid)}&quot;? The hotspot and this page will go offline.')">
 <input type="hidden" name="ssid" value="{_h(ssid)}">
 <button class="btn-link">Connect</button>
 </form>
@@ -160,12 +161,24 @@ onsubmit="return confirm('Forget &quot;{_h(ssid)}&quot;?')">
         for n in available:
             sec = n["security"] if n["security"] else "Open"
             bars = _signal_bars(n["signal"])
+            # Rete protetta e non salvata: la password si chiede qui. Senza
+            # questo campo il Connect partiva a vuoto, e per scoprirlo il box
+            # spegneva l'hotspot: si perdeva la pagina e la connessione al
+            # box per un tentativo che non poteva riuscire.
+            needs_password = bool(n["security"]) and n["ssid"] not in saved
+            password_field = (
+                f"""<div class="pwd-row" style="margin-top:6px">
+<input type="password" name="password" placeholder="Password for {_h(n["ssid"])}" required>
+</div>""" if needs_password else ""
+            )
             avail_rows += f"""<div class="row">
 <div class="name">{_h(n["ssid"])} <small>{sec}</small></div>
 <div class="signal">{bars} {n["signal"]}%</div>
 <div class="actions">
-<form method="post" action="/connect" style="display:inline">
+<form method="post" action="/connect" style="display:inline"
+onsubmit="return confirm('Connect to &quot;{_h(n["ssid"])}&quot;? The hotspot and this page will go offline.')">
 <input type="hidden" name="ssid" value="{_h(n["ssid"])}">
+{password_field}
 <button class="btn-link">Connect</button>
 </form>
 </div></div>"""
@@ -299,6 +312,11 @@ function addNetwork() {{
         password = request.form.get("password", "")
         if not ssid or not wifi_manager:
             return _redirect_with("?err=No+WiFi+manager")
+        # Controllo prima di toccare la radio: la connessione richiede di
+        # spegnere l'hotspot, quindi un tentativo senza password su una rete
+        # protetta costerebbe all'utente questa pagina per niente.
+        if not password and wifi_manager.password_required(ssid):
+            return _redirect_with(f"?err=Password+required+for+{ssid}")
         ok = wifi_manager.connect_to_network(ssid, password)
         if ok:
             return _redirect_with(f"?ok=Connected+to+{ssid}")

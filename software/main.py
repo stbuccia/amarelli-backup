@@ -454,6 +454,43 @@ def _loop(
     wifi_manager = None
     flask_thread = None
     flask_server = None
+    wifi_task_lock = threading.Lock()
+    wifi_task_running = None
+
+    def _run_wifi_task(name, work, busy_text):
+        """Esegue un'operazione di rete fuori dal ciclo principale.
+
+        nmcli puo' prendersi diversi secondi (attivazione del profilo AP,
+        riconnessione, scansione): eseguendola dentro l'handler del tasto, il
+        ciclo principale non leggeva piu' i tasti ne' ridisegnava lo schermo,
+        e il box sembrava piantato fino alla fine dell'operazione. Qui
+        l'utente vede subito "Starting/Stopping AP..." e puo' continuare a
+        navigare nel menu mentre il lavoro procede.
+        """
+        nonlocal wifi_task_running
+        with wifi_task_lock:
+            if wifi_task_running:
+                logger.info("[MENU] %s ignored: '%s' still running", name, wifi_task_running)
+                legend.set_text("WiFi busy...")
+                bus.emit("ui:redraw")
+                return
+            wifi_task_running = name
+        legend.set_text(busy_text)
+        bus.emit("ui:redraw")
+
+        def runner():
+            nonlocal wifi_task_running
+            try:
+                work()
+            except Exception as e:
+                logger.exception("Wi-Fi task '%s' failed: %s", name, e)
+                legend.set_text("WiFi error!")
+                bus.emit("ui:redraw")
+            finally:
+                with wifi_task_lock:
+                    wifi_task_running = None
+
+        threading.Thread(target=runner, name=name, daemon=True).start()
 
     def _start_flask(wm=None):
         nonlocal flask_thread, flask_server
@@ -467,10 +504,14 @@ def _loop(
         try:
             app = create_app(wifi_manager=wm, db=db, bus=bus)
             flask_server = make_server(host, port, app)
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             # Porta occupata, errore nell'app: va detto, non ingoiato, o il
             # box mostra "AP pronto" con una pagina che non risponde.
-            logger.error("Error starting Flask on %s:%s: %s", host, port, e)
+            # SystemExit e' incluso di proposito: make_server() di werkzeug
+            # stampa "Port 5000 is in use" e chiama sys.exit(1), che non
+            # essendo una Exception faceva terminare tutta l'applicazione.
+            logger.error("Error starting Flask on %s:%s: %s", host, port,
+                         "port already in use" if isinstance(e, SystemExit) else e)
             flask_server = None
             flask_thread = None
             return False
@@ -493,6 +534,9 @@ def _loop(
         logger.info("Flask fermato")
 
     def start_hotspot(**kw):
+        _run_wifi_task("start-ap", _start_hotspot_work, "Starting AP...")
+
+    def _start_hotspot_work():
         nonlocal wifi_manager
         # Per sicurezza il server web parte solo insieme all'access point:
         # non deve mai restare in ascolto sulla rete Wi-Fi normale.
@@ -505,7 +549,7 @@ def _loop(
             if not password:
                 logger.warning("WIFI_AP_PASSWORD non impostata nel .env")
                 legend.set_text("NO AP PASSWORD!")
-                display.render_full(active_view[0], sb, legend)
+                bus.emit("ui:redraw")
                 return
             wifi_manager.start_ap(ssid, password)
         except ValueError as e:
@@ -513,12 +557,19 @@ def _loop(
             # rete, e va distinto da un fallimento di NetworkManager.
             logger.error("Invalid AP configuration: %s", e)
             legend.set_text("AP PASSWORD < 8 CHAR!")
-            display.render_full(active_view[0], sb, legend)
+            bus.emit("ui:redraw")
             return
         except Exception as e:
             logger.error("Error starting AP: %s", e)
+            # Con l'AP giu' il box non e' raggiungibile: il log e' l'unica
+            # traccia, quindi si registra subito lo stato della rete. Un
+            # problema qui non deve cambiare il messaggio mostrato.
+            try:
+                wifi_manager.log_diagnostics()
+            except Exception as diag_error:
+                logger.warning("AP diagnostics failed: %s", diag_error)
             legend.set_text("AP error!")
-            display.render_full(active_view[0], sb, legend)
+            bus.emit("ui:redraw")
             return
 
         _set_wifi_status(True, f"AP {ssid}")
@@ -538,7 +589,7 @@ def _loop(
                 )
         else:
             legend.set_text("AP ok - WEB ERROR!")
-        display.render_full(active_view[0], sb, legend)
+        bus.emit("ui:redraw")
 
     bus.on("hotspot:start", start_hotspot)
     bus.on("wifi:connect", lambda **kw: start_hotspot())
@@ -553,6 +604,9 @@ def _loop(
     bus.on("wifi:show_ip", show_ip)
 
     def stop_hotspot(**kw):
+        _run_wifi_task("stop-ap", _stop_hotspot_work, "Stopping AP...")
+
+    def _stop_hotspot_work():
         nonlocal wifi_manager
         logger.info("[MENU] Stopping AP...")
         reconnected = None
@@ -575,7 +629,7 @@ def _loop(
         else:
             logger.info("AP stopped, no Wi-Fi network available")
             legend.set_text("\u25c0 menu  \u25b6 backup")
-        display.render_full(active_view[0], sb, legend)
+        bus.emit("ui:redraw")
 
     bus.on("wifi:reset", stop_hotspot)
 

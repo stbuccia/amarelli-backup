@@ -7,7 +7,7 @@
     "db_path": "~/liquorice/files.db",
     "prune_policy": 30,
     "mode": "upload",
-    "file_filter": "all",
+    "file_filter": "jpg",
     "flask_host": "0.0.0.0",
     "flask_port": 5000,
     "sd_mount": true,

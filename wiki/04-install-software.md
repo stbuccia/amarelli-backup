@@ -94,4 +94,25 @@ You can run the software on a normal PC to explore the app and the web page, wit
 .venv/bin/python software/main.py --mock
 ```
 
-Mock mode only creates the environment, installs the dependencies, and prepares `~/liquorice`. It does not touch SPI, GPIO, the service, or the screen driver. To fake a card, point `sd_src` at a local folder (mock install makes `~/liquorice/fake-sd`), set `sd_mount` to `false`, and drop a few `.jpg` files in there. See chapter 5 for the config file. Next, pick where your photos should go: [Backup destination](05-backup-destination.md).
+Mock mode only creates the environment, installs the dependencies, and prepares `~/liquorice`. It does not touch SPI, GPIO, the service, or the screen driver. To fake a card, point `sd_src` at a local folder (mock install makes `~/liquorice/fake-sd`), set `sd_mount` to `false`, and drop a few `.jpg` files in there. See chapter 5 for the config file.
+
+### Running mock mode on the Pi's card from a PC
+
+Mounting the Raspberry Pi's SD card on a PC and running `.venv/bin/python software/main.py --mock` from it does not work:
+
+```
+ModuleNotFoundError: No module named 'PIL'
+```
+
+That `.venv` belongs to the Pi: it was built by the Pi's Python (3.11) and its packages live in `lib/python3.11/`. On the PC `.venv/bin/python` resolves to the system Python, which looks in `lib/python3.<your version>/` and finds nothing. Worse, `./install.sh --mock` from that folder would pip-install PC packages into the Pi's environment and break it. The installer now refuses to do that and tells you so.
+
+Use a separate environment instead, and leave the card's one alone:
+
+```bash
+LIQUORICE_VENV="$HOME/liquorice-mock-venv" ./install.sh --mock
+"$HOME/liquorice-mock-venv/bin/python" -B software/main.py --mock
+```
+
+`-B` keeps Python from writing `__pycache__` onto the card. If your PC already has Pillow, Flask, python-dotenv and nmcli installed system-wide, `python3 -B software/main.py --mock` works too, with no environment at all. Better still, work on a normal clone of the repository on the PC and keep the card only for the box.
+
+Next, pick where your photos should go: [Backup destination](05-backup-destination.md).

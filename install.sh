@@ -3,7 +3,10 @@
 set -Eeuo pipefail
 
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-VENV_DIR="$PROJECT_DIR/.venv"
+# LIQUORICE_VENV permette di tenere un venv separato da quello del progetto:
+# serve per provare la modalita' mock su un PC leggendo la card del Raspberry,
+# senza toccare il venv che appartiene al Pi.
+VENV_DIR="${LIQUORICE_VENV:-$PROJECT_DIR/.venv}"
 BOOT_CONFIG=""
 SPI_OVERLAY='dtoverlay=anyspi,spi0-1,dev=mmc-spi-slot,speed=10000000'
 SYSTEMD_DIR=/etc/systemd/system
@@ -16,6 +19,34 @@ fail() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+# Un venv appartiene all'interprete che l'ha creato. Riusarne uno costruito da
+# un altro Python (tipico: il venv del Raspberry, python3.11, riletto da un PC
+# con python3.14 montando la sua SD) non da' errore subito: pip ci installa
+# pacchetti della macchina sbagliata e il venv del Pi resta rotto in silenzio,
+# mentre l'app fallisce con "ModuleNotFoundError: No module named 'PIL'"
+# perche' cerca in lib/python3.14/ invece di lib/python3.11/.
+ensure_venv() {
+    local cfg="$VENV_DIR/pyvenv.cfg"
+    local local_version
+    local_version=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+    if [[ -d $VENV_DIR ]]; then
+        local venv_version=""
+        [[ -f $cfg ]] && venv_version=$(sed -n 's/^version[^=]*= *//p' "$cfg" | cut -d. -f1,2)
+        if [[ -z $venv_version ]]; then
+            fail "$VENV_DIR exists but is not a virtualenv. Remove it or set LIQUORICE_VENV to another path."
+        fi
+        if [[ $venv_version != "$local_version" ]]; then
+            fail "$VENV_DIR was created by Python $venv_version but this machine has $local_version.
+       This usually means you are running the installer on the Raspberry Pi card from
+       another computer: installing here would overwrite the Pi's environment.
+       Use a separate one instead, for example:
+           LIQUORICE_VENV=\"\$HOME/liquorice-mock-venv\" $0 --mock"
+        fi
+        return 0
+    fi
+    python3 -m venv "$VENV_DIR"
 }
 
 configure_boot() {
@@ -77,9 +108,7 @@ if [[ $MOCK == true ]]; then
     printf 'Mock install (nessun hardware Raspberry Pi).\n\n'
 
     printf 'Installing Python dependencies in %s...\n' "$VENV_DIR"
-    if [[ ! -d $VENV_DIR ]]; then
-        python3 -m venv "$VENV_DIR"
-    fi
+    ensure_venv
     "$VENV_DIR/bin/python" -m pip install --upgrade pip
     # Senza l'extra raspberry-pi: spidev, lgpio, RPi.GPIO e rpi_ws281x non
     # servono in mock e su un PC non compilano.
@@ -147,9 +176,7 @@ printf 'Preparing persistent application data directory...\n'
 mkdir -p "$HOME/liquorice/cache"
 
 printf 'Installing Python dependencies in %s...\n' "$VENV_DIR"
-if [[ ! -d $VENV_DIR ]]; then
-    python3 -m venv "$VENV_DIR"
-fi
+ensure_venv
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 # Editable install: le dipendenze finiscono nel virtualenv ma il codice resta
 # quello di software/, senza copie duplicate in site-packages ne' cartella build/.

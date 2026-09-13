@@ -18,11 +18,11 @@ This project was made for the [Laboratorio di Making](https://www.unibo.it/it/st
 
 You put your camera microSD card in the box and it backups your photo copying them locally, and then uploading in your favorite cloud storage (WebDav Server ory any place with rclone supports like Dropbox, Google Drive and over 70 more cloud storages). E-ink screen show you the progress, four buttons allow you to interact and a LED show the status with the colour.  
 
-You can check bu yourself in this demo video:
+You can check by yourself in this demo video: it shows the local caching, the upload and how you can pause/resume it:
 
-https://github.com/user-attachments/assets/demo.mp4
-
-Or watch/download it directly from the repo: [wiki/assets/video/demo.mp4](wiki/assets/video/demo.mp4)
+<video src="wiki/assets/video/demo.mp4" controls muted width="600">
+  Your browser does not support the video tag. <a href="wiki/assets/video/demo.mp4">Download demo.mp4</a>
+</video>
 
 ## Documentation
 

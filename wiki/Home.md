@@ -4,6 +4,32 @@ This project turns a cute Amarelli liquorice tin (like [these](https://www.amare
 
 You put your camera's micro sd card into the box and the box copies the photos and sends them to a place you pick: Webdav server, Nextcloud, Google Drive, Dropbox, and more. A small screen shows the progress, an LED strip shows the state by colour, and you can interact with buttons and scrren and changing options with menu. You could also configure wifi and some options via web page accessible from external device.
 
+## Demo
+
+### 1. Caching, upload and pause: `demo.mp4`
+
+Shows how the box copies photos to the local cache immediately (no internet needed), then uploads them in background when Wi-Fi is available, with the ability to pause/resume the upload from the buttons/menu.
+
+<video src="assets/video/demo.mp4" controls muted width="600">
+  Your browser does not support the video tag. <a href="assets/video/demo.mp4">Download demo.mp4</a>
+</video>
+
+### 2. Closing the tin and screen lock: `cover.mp4`
+
+Closing the lid triggers the screen lock / cover handling.
+
+<video src="assets/video/cover.mp4" controls muted width="600">
+  Your browser does not support the video tag. <a href="assets/video/cover.mp4">Download cover.mp4</a>
+</video>
+
+### 3. Configuring another Wi-Fi: `wifi.mp4`
+
+How to connect to a new Wi-Fi network from the box: start the access point from the menu, connect from phone/laptop and open `http://<box-ip>:5000` to enter the new credentials.
+
+<video src="assets/video/wifi.mp4" controls muted width="600">
+  Your browser does not support the video tag. <a href="assets/video/wifi.mp4">Download wifi.mp4</a>
+</video>
+
 This guide takes you from zero to a working box. Read the chapters in order the first time.
 
 ## Chapters

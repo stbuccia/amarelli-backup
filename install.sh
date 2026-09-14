@@ -235,18 +235,23 @@ printf 'Installing Liquorice startup service...\n'
 # Il unit file nel repository usa /home/raspberry/liquorice-backup come esempio:
 # qui viene riscritto con l'utente e il percorso reali, cosi' il servizio parte
 # anche se il progetto e' stato clonato in una cartella con un altro nome.
+# User= NON viene riscritto: il servizio deve girare come root (PWM/DMA della
+# striscia LED su /dev/mem, profilo AP via nmcli, mount della SD). HOME invece
+# punta alla home dell'utente, perche' i path con "~" di config.json (db, cache,
+# log) devono restare dove sono i dati e non finire in /root.
 unit_file=$(mktemp)
-sed -e "s|^User=.*|User=$USER|" \
+sed -e "s|^Environment=HOME=.*|Environment=HOME=$HOME|" \
     -e "s|^WorkingDirectory=.*|WorkingDirectory=$PROJECT_DIR|" \
     -e "s|^Environment=PYTHONPATH=.*|Environment=PYTHONPATH=$PROJECT_DIR/software|" \
     -e "s|^ExecStart=.*|ExecStart=$VENV_DIR/bin/python $PROJECT_DIR/software/main.py|" \
     "$PROJECT_DIR/systemd/liquorice.service" >"$unit_file"
 sudo install -m 0644 "$unit_file" "$SYSTEMD_DIR/liquorice.service"
 rm -f "$unit_file"
-printf 'Service configured for %s in %s\n' "$USER" "$PROJECT_DIR"
-# Regola sudoers per il mount della card: il servizio non gira come root e
-# sdcard.py chiama mkdir/mount/umount tramite sudo. La regola e' limitata a
-# quei tre comandi, al solo /mnt/liquorice-sd e al mount in sola lettura.
+printf 'Service configured as root, HOME=%s, project in %s\n' "$HOME" "$PROJECT_DIR"
+# Regola sudoers per il mount della card: sotto il servizio (root) il sudo di
+# sdcard.py passerebbe comunque, ma serve quando l'app viene lanciata a mano
+# come utente normale. E' limitata a mkdir/mount/umount, al solo
+# /mnt/liquorice-sd e al mount in sola lettura.
 # Il glob parte da mmcblk1 come _find_device(): mmcblk0 e' la SD di sistema.
 sudoers_file=$(mktemp)
 cat >"$sudoers_file" <<EOF

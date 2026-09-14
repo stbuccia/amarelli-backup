@@ -1,3 +1,5 @@
+
+
 # Liquorice Backup
 
 This project turns a cute Amarelli liquorice tin (like [these](https://www.amarelli.it/categoria-prodotto/liquirizia/?jsf=jet-engine%3Amain-loop&tax=pa_confezione%3A595%3Bpa_peso%3A592%2C593)) into a small photo backup box.
@@ -10,25 +12,20 @@ You put your camera's micro sd card into the box and the box copies the photos a
 
 Shows how the box copies photos to the local cache immediately (no internet needed), then uploads them in background when Wi-Fi is available, with the ability to pause/resume the upload from the buttons/menu.
 
-<video src="assets/video/demo.mp4" controls muted width="600">
-  Your browser does not support the video tag. <a href="assets/video/demo.mp4">Download demo.mp4</a>
-</video>
+https://github.com/user-attachments/assets/9cb672e0-f81e-46bb-84d8-f59a53d57a41
+
 
 ### 2. Closing the tin and screen lock: `cover.mp4`
 
 Closing the lid triggers the screen lock / cover handling.
 
-<video src="assets/video/cover.mp4" controls muted width="600">
-  Your browser does not support the video tag. <a href="assets/video/cover.mp4">Download cover.mp4</a>
-</video>
+https://github.com/user-attachments/assets/318411bd-aac7-48a8-9b28-a56dbcda2e6b
 
 ### 3. Configuring another Wi-Fi: `wifi.mp4`
 
 How to connect to a new Wi-Fi network from the box: start the access point from the menu, connect from phone/laptop and open `http://<box-ip>:5000` to enter the new credentials.
 
-<video src="assets/video/wifi.mp4" controls muted width="600">
-  Your browser does not support the video tag. <a href="assets/video/wifi.mp4">Download wifi.mp4</a>
-</video>
+https://github.com/user-attachments/assets/718ee54f-ab58-4cac-961d-e77d3bd64055
 
 This guide takes you from zero to a working box. Read the chapters in order the first time.
 

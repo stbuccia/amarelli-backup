@@ -12,14 +12,14 @@ You put your camera's micro sd card into the box and the box copies the photos a
 
 Shows how the box copies photos to the local cache immediately (no internet needed), then uploads them in background when Wi-Fi is available, with the ability to pause/resume the upload from the buttons/menu.
 
-https://github.com/user-attachments/assets/9cb672e0-f81e-46bb-84d8-f59a53d57a41
+https://github.com/user-attachments/assets/318411bd-aac7-48a8-9b28-a56dbcda2e6b
 
 
 ### 2. Closing the tin and screen lock: `cover.mp4`
 
 Closing the lid triggers the screen lock / cover handling.
 
-https://github.com/user-attachments/assets/318411bd-aac7-48a8-9b28-a56dbcda2e6b
+https://github.com/user-attachments/assets/9cb672e0-f81e-46bb-84d8-f59a53d57a41
 
 ### 3. Configuring another Wi-Fi: `wifi.mp4`
 

@@ -17,7 +17,8 @@ cd ~/liquorice-backup
 - Creates a Python environment in `.venv` and installs the app into it
 - Downloads the Waveshare screen driver, fixes the reset pin to BCM 27, and copies it into the environment
 - Adds your user to the `gpio`, `kmem` and `spi` groups, so the LED strip and GPIO work
-- Installs and enables the `liquorice` service, so the box starts on its own. The unit is generated from `systemd/liquorice.service.in` with your username and the project folder, so no path or user is hardcoded
+- Installs and enables the `liquorice` service, so the box starts on its own. The installer takes `systemd/liquorice.service` and rewrites the user, the project folder and the Python path with the real ones, so nothing is hardcoded
+- Adds a `sudoers` rule so the app can mount the camera card read-only on `/mnt/liquorice-sd` without a password. It allows only `mkdir`, `mount -o ro` and `umount` on that one mount point
 
 ## Reboot
 

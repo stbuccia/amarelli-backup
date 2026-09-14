@@ -61,7 +61,7 @@ More in [Install the software](wiki/04-install-software.md).
 + `.env`: secrets (WebDAV, Wi-Fi). You create this yourself; keep it private and out of git
 + `software/tests/hardware/`: small scripts to test each part
 + `hardware/`: wiring, schematic and electronics notes
-+ `systemd/`: the service unit and system rules
++ `systemd/`: the service unit
 + `wiki/`: the step-by-step guide
 
 ## Credits

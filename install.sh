@@ -244,12 +244,16 @@ sed -e "s|^User=.*|User=$USER|" \
 sudo install -m 0644 "$unit_file" "$SYSTEMD_DIR/liquorice.service"
 rm -f "$unit_file"
 printf 'Service configured for %s in %s\n' "$USER" "$PROJECT_DIR"
-sudo install -m 0440 "$PROJECT_DIR/systemd/liquorice-sdcard.sudoers" "$SUDOERS_DIR/liquorice-sdcard"
-# 2026-09-08: watchdog hardware NON installato. Il BCM2835 esprime al massimo
-# ~16s di timeout, mentre la conf ne chiedeva 20; con RuntimeWatchdogSec attivo
-# la board si resettava a freddo durante le fasi di forte I/O in boot.
-# Per riabilitarlo, usare un valore sotto il limite hardware (es. 10s).
-# sudo install -D -m 0644 "$PROJECT_DIR/systemd/liquorice-watchdog.conf" /etc/systemd/system.conf.d/liquorice-watchdog.conf
+# Regola sudoers per il mount della card: il servizio non gira come root e
+# sdcard.py chiama mkdir/mount/umount tramite sudo. La regola e' limitata a
+# quei tre comandi, al solo /mnt/liquorice-sd e al mount in sola lettura.
+# Il glob parte da mmcblk1 come _find_device(): mmcblk0 e' la SD di sistema.
+sudoers_file=$(mktemp)
+cat >"$sudoers_file" <<EOF
+$USER ALL=(root) NOPASSWD: /usr/bin/mkdir -p /mnt/liquorice-sd, /usr/bin/mount -o ro /dev/mmcblk[1-9]* /mnt/liquorice-sd, /usr/bin/umount /mnt/liquorice-sd
+EOF
+sudo install -m 0440 "$sudoers_file" "$SUDOERS_DIR/liquorice-sdcard"
+rm -f "$sudoers_file"
 sudo visudo -cf "$SUDOERS_DIR/liquorice-sdcard"
 sudo udevadm control --reload-rules
 sudo systemctl daemon-reload

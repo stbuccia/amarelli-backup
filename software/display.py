@@ -66,28 +66,6 @@ def _render_icons_in_text(draw, x, y, text, font, fill=0):
 logger = logging.getLogger(__name__)
 
 
-class BusyMonitor:
-    """Registra i timeout su BUSY senza interrompere la sequenza del driver.
-
-    Interrompere il driver a metà attesa (sollevando un'eccezione da ReadBusy)
-    lascia il pannello con un frame a metà: sullo schermo compaiono puntini
-    bianchi e neri, peggio dell'immagine vecchia. Qui la sequenza di comandi
-    viene sempre portata a termine: si prende solo nota che il frame non e'
-    stato confermato, e chi disegna decide cosa fare.
-    """
-
-    def __init__(self):
-        self.timeouts = 0
-        self.aborted = False
-
-    def note_timeout(self):
-        self.timeouts += 1
-        self.aborted = True
-
-    def reset(self):
-        self.aborted = False
-
-
 class StatusBar:
     HEIGHT = 16
 
@@ -536,14 +514,6 @@ class Display:
     # Quanto considerare ancora "in refresh" dopo la fine, per coprire il
     # ritardo con cui gpiozero consegna gli eventi dei pulsanti.
     REFRESH_GUARD_SECONDS = 0.35
-    # Con il pannello piantato su BUSY ogni ridisegno costa un timeout intero:
-    # dopo un frame non confermato si smette di riprovare per un po',
-    # altrimenti il ciclo principale resta bloccato a ogni tasto premuto e
-    # tutta la scatola sembra morta anche se backup e web server funzionano.
-    # L'attesa raddoppia a ogni fallimento: se il pannello e' guasto davvero,
-    # i tentativi diventano rari invece di rubare 20s ogni mezzo minuto.
-    BUSY_RETRY_SECONDS = 30.0
-    BUSY_RETRY_MAX_SECONDS = 300.0
 
     def __init__(self, epd, font, io_lock=None, health_check=True):
         self._epd = epd
@@ -557,9 +527,6 @@ class Display:
         self._silent_renders = 0
         self._refreshing = False
         self._refresh_ended = 0.0
-        self._busy_monitor = getattr(epd, "busy_monitor", None)
-        self._busy_backoff = self.BUSY_RETRY_SECONDS
-        self._busy_retry_at = 0.0
 
     @property
     def font(self):
@@ -593,21 +560,9 @@ class Display:
             self._init_panel()
 
     def _init_panel(self):
-        """init + Clear tollerando un pannello che tiene BUSY alto.
-
-        Se il controller e' piantato all'accensione, l'avvio non deve fermarsi:
-        il box deve partire comunque (backup, LED, web server) e riprovare ai
-        ridisegni successivi.
-        """
-        self._busy_reset()
+        """init + Clear: sequenza di accensione del pannello."""
         self._epd.init()
         self._epd.Clear(0xFF)
-        if self._busy_aborted():
-            logger.error(
-                "Il pannello e-ink non conferma il refresh all'accensione "
-                "(BUSY sempre alto): riprovo piu' tardi"
-            )
-            self._note_busy_failure()
 
     def sleep(self):
         with self._lock():
@@ -631,7 +586,6 @@ class Display:
             if not self._suspended:
                 return
             self._suspended = False
-            self._busy_reset()
             self._epd.init()
             self._initialized = True
         logger.info("Display riattivato: coperchio aperto")
@@ -701,69 +655,21 @@ class Display:
             return False
         return elapsed >= self.MIN_REFRESH_SECONDS
 
-    def _busy_reset(self):
-        if self._busy_monitor is not None:
-            self._busy_monitor.reset()
-
-    def _busy_aborted(self):
-        return self._busy_monitor is not None and self._busy_monitor.aborted
-
-    def _skip_while_stuck(self):
-        """True se il pannello e' bloccato e non e' ancora ora di riprovare."""
-        if not self._busy_retry_at:
-            return False
-        if time.monotonic() < self._busy_retry_at:
-            return True
-        self._busy_retry_at = 0.0
-        return False
-
-    def _note_busy_failure(self):
-        """Frame non confermato: si mette in pausa il pannello, senza toccarlo.
-
-        Nessun reset e nessun power cycle: interrompere o forzare il controller
-        in questo stato lo lascia con mezzo frame a schermo (puntini bianchi e
-        neri). Meglio conservare l'ultima immagine buona e riprovare piu' tardi.
-        """
-        self._busy_retry_at = time.monotonic() + self._busy_backoff
-        if self._panel_ok:
-            logger.error(
-                "Il pannello e-ink non conferma il refresh (BUSY alto): l'immagine "
-                "a schermo resta quella vecchia mentre backup, LED e pagina web "
-                "continuano a funzionare. Riprovo tra %.0fs. Se non torna, controlla "
-                "il filo BUSY (BCM24) e l'alimentazione 3.3V del display.",
-                self._busy_backoff,
-            )
-        self._panel_ok = False
-        self._busy_backoff = min(self._busy_backoff * 2, self.BUSY_RETRY_MAX_SECONDS)
-
-    def _note_busy_success(self):
-        if not self._panel_ok:
-            logger.info("Display di nuovo operativo")
-        self._panel_ok = True
-        self._busy_backoff = self.BUSY_RETRY_SECONDS
-        self._busy_retry_at = 0.0
-
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
         self._last_frame = img
         with self._lock():
             if self._suspended:
                 return
-            # Pannello piantato: si esce subito, senza restare appesi sul
-            # timeout di BUSY, cosi' tasti e backup rimangono reattivi.
-            if self._skip_while_stuck():
-                return
             buffer = self._epd.getbuffer(img)
-            self._busy_reset()
             elapsed = self._push(buffer)
             self._initialized = True
-            if self._busy_aborted():
-                self._note_busy_failure()
-                return
             if not self._health_check:
                 return
             if elapsed >= self.MIN_REFRESH_SECONDS:
-                self._note_busy_success()
+                if not self._panel_ok:
+                    logger.info("Display di nuovo operativo")
+                self._panel_ok = True
                 self._silent_renders = 0
                 return
             self._on_silent_refresh(buffer)
@@ -793,44 +699,51 @@ class Display:
 
 
 def install_busy_timeout(epd, timeout=20.0):
-    """Limita l'attesa su BUSY: senza timeout un pannello piantato blocca la UI.
+    """Limita l'attesa su BUSY: senza timeout un pannello piantato blocca a
+    tempo indefinito il thread che sta disegnando, e con lui backup e pulsanti.
 
     L'attesa viene solo abbandonata, mai interrotta a metà: la sequenza di
-    comandi del driver continua fino in fondo, altrimenti il pannello resta con
-    un frame incompleto (puntini bianchi e neri a schermo).
+    comandi del driver prosegue fino in fondo, altrimenti il pannello resta con
+    un frame incompleto (puntini bianchi e neri a schermo, peggio di
+    un'immagine vecchia).
 
-    Il timeout resta generoso (un refresh completo dura ~2s) per non scambiare
-    un pannello lento per uno guasto. Chi ha chiamato riceve il BusyMonitor:
-    quando un frame non viene confermato, Display sospende i ridisegni invece
-    di pagare l'attesa intera a ogni tasto premuto.
+    Il timeout e' generoso, un refresh completo dura ~2s, per non scambiare un
+    pannello lento per uno guasto. Dopo il primo scaduto si smette di aspettare
+    fino al prossimo init(): init() + display() chiamano ReadBusy quattro
+    volte, e senza questo il blocco durerebbe quattro timeout invece di uno.
+    Riarmare su init() basta perche' ogni sequenza parte da la'.
     """
     try:
         from waveshare_epd import epdconfig
     except ImportError:
-        return None
+        return False
 
-    monitor = BusyMonitor()
+    epd.busy_timed_out = False
+    original_init = epd.init
+
+    def init(*args, **kwargs):
+        epd.busy_timed_out = False
+        return original_init(*args, **kwargs)
 
     def read_busy():
-        # Dopo il primo timeout non si aspetta piu' dentro lo stesso frame: le
-        # attese successive sono perse comunque e moltiplicherebbero il tempo
-        # in cui il ciclo principale resta fermo.
-        if monitor.aborted:
+        if epd.busy_timed_out:
             return
         started = time.monotonic()
         while epdconfig.digital_read(epd.busy_pin) == 1:
             if time.monotonic() - started > timeout:
+                epd.busy_timed_out = True
                 logger.error(
-                    "e-Paper BUSY alto da oltre %.0fs: frame non confermato",
+                    "e-Paper BUSY alto da oltre %.0fs: frame non confermato, a "
+                    "schermo resta l'immagine vecchia. Controlla il filo BUSY "
+                    "(BCM24) e l'alimentazione 3.3V del display.",
                     timeout,
                 )
-                monitor.note_timeout()
                 return
             epdconfig.delay_ms(10)
 
+    epd.init = init
     epd.ReadBusy = read_busy
-    epd.busy_monitor = monitor
-    return monitor
+    return True
 
 
 def setup_ui_handlers(

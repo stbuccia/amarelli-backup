@@ -753,7 +753,9 @@ def main():
         )
     epd = EPD()
     if not args.mock:
-        # Senza timeout, un pannello piantato con BUSY alto blocca il main loop.
+        # Senza timeout, un pannello piantato con BUSY alto blocca per sempre
+        # il thread che disegna: e con l'event bus sincrono quel thread e'
+        # quello del backup o dei pulsanti.
         install_busy_timeout(epd)
     run_interactive(epd)
 

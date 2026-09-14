@@ -43,51 +43,6 @@ class Database:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_pruned ON files(pruned_at);"
         )
-        self._migrate()
-
-    def _migrate(self):
-        try:
-            self.conn.execute(
-                "ALTER TABLE files ADD COLUMN mark_delete INTEGER NOT NULL DEFAULT 0"
-            )
-        except Exception:
-            pass
-        try:
-            cursor = self.conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='files'"
-            )
-            sql = cursor.fetchone()[0]
-            if "file_hash TEXT UNIQUE" in sql:
-                logger.info("Migrating database schema: UNIQUE(file_hash) -> UNIQUE(sd_path)")
-                self.conn.executescript("""
-                    CREATE TABLE files_new (
-                        id INTEGER PRIMARY KEY,
-                        file_hash TEXT NOT NULL,
-                        sd_path TEXT UNIQUE NOT NULL,
-                        cache_path TEXT,
-                        remote_path TEXT,
-                        size_bytes INTEGER NOT NULL,
-                        mtime REAL NOT NULL,
-                        cached_at REAL,
-                        uploaded_at REAL,
-                        pruned_at REAL,
-                        upload_error TEXT,
-                        upload_attempts INTEGER NOT NULL DEFAULT 0,
-                        mark_delete INTEGER NOT NULL DEFAULT 0
-                    );
-                    INSERT INTO files_new SELECT * FROM files;
-                    DROP TABLE files;
-                    ALTER TABLE files_new RENAME TO files;
-                """)
-                self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_files_uploaded ON files(uploaded_at);"
-                )
-                self.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_files_pruned ON files(pruned_at);"
-                )
-                logger.info("Database migration complete")
-        except Exception as e:
-            logger.warning("Schema migration skipped: %s", e)
 
     def close(self):
         self.conn.close()
@@ -96,9 +51,7 @@ class Database:
         return FileRecord(*row)
 
     def find_by_sd_path(self, sd_path: str) -> FileRecord | None:
-        cursor = self.conn.execute(
-            "SELECT * FROM files WHERE sd_path = ?", (sd_path,)
-        )
+        cursor = self.conn.execute("SELECT * FROM files WHERE sd_path = ?", (sd_path,))
         row = cursor.fetchone()
         return self._row_to_record(row) if row else None
 
@@ -118,7 +71,12 @@ class Database:
         return self.find_by_sd_path(sd_path)
 
     def re_cache(
-        self, file_hash: str, sd_path: str, cache_path: str, size_bytes: int, mtime: float
+        self,
+        file_hash: str,
+        sd_path: str,
+        cache_path: str,
+        size_bytes: int,
+        mtime: float,
     ) -> FileRecord:
         self.conn.execute(
             """UPDATE files SET file_hash = ?, cache_path = ?, size_bytes = ?, mtime = ?,

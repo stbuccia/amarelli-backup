@@ -238,6 +238,7 @@ class Cache:
         for record in uploaded:
             try:
                 path = Path(record.cache_path)
+                self._bus.emit("file:current", path=str(path))
                 if path.exists():
                     path.unlink()
                     logger.info("Deleted: %s", path)

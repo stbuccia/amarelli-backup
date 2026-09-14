@@ -117,6 +117,7 @@ class Uploader(ABC):
             try:
                 self._ensure_remote_dir_cached(str(remote_path.parent))
                 logger.info("Uploading %s -> %s", local_path, remote_path)
+                self._bus.emit("file:current", path=str(local_path))
                 self.put(local_path, str(remote_path))
                 self.db.mark_uploaded(f.id, str(remote_path))
                 self._bus.emit("file:uploaded", file=f)
@@ -156,6 +157,7 @@ class Uploader(ABC):
                 continue
             try:
                 logger.info("Deleting remote file: %s", remote_path)
+                self._bus.emit("file:current", path=str(remote_path))
                 self.delete(remote_path)
                 local_path = Path(f.cache_path) if f.cache_path else None
                 if local_path and local_path.exists():

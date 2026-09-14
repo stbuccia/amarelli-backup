@@ -387,11 +387,7 @@ def _loop(
                 if bv.progress_total
                 else ""
             )
-            cur = (
-                f" file:{bv.current_file}"
-                if bv.current_file and bv.status == "Caching files..."
-                else ""
-            )
+            cur = f" file:{bv.current_file}" if bv.current_file else ""
             stats = getattr(bv, "_stats", None)
             if stats:
                 stats_s = f" | stats cached:{stats.get('cached_ok', 0)}/{stats.get('cached_failed', 0)} up:{stats.get('uploaded_ok', 0)}/{stats.get('uploaded_failed', 0)} rm:{stats.get('remote_deleted', 0)} pr:{stats.get('pruned', 0)}"

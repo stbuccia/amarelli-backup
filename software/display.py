@@ -162,6 +162,7 @@ class BackupStatusView:
             bus.on("file:pruned", self._on_file_pruned)
             bus.on("file:remote_deleted", self._on_remote_deleted)
             bus.on("cache:file", self._on_cache_file)
+            bus.on("file:current", self._on_current_file)
             bus.on("sd:changed", self._on_sd_changed)
 
     def refresh(self):
@@ -283,6 +284,10 @@ class BackupStatusView:
         self.progress_current = max(
             self.progress_current, min(processed, self.progress_total)
         )
+        self._bus.emit("ui:redraw")
+
+    def _on_current_file(self, path, **kw):
+        self.current_file = str(path).rsplit("/", 1)[-1]
         self._bus.emit("ui:redraw")
 
     def _on_file_uploaded(self, file=None, **kw):
@@ -540,7 +545,6 @@ class Display:
         return self._io_lock or nullcontext()
 
     def init(self):
-        """init + Clear: sequenza di accensione (e di spegnimento) del pannello."""
         with self._lock():
             self._epd.init()
             self._epd.Clear(0xFF)

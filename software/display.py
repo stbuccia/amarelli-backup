@@ -153,7 +153,7 @@ class LockView:
         draw.rectangle([(bx + 12, by + 8), (bx + 24, by + 16)], fill=0)
         draw.arc([(bx + 8, by - 12), (bx + 28, by + 10)], 180, 0, fill=0, width=2)
         y = by + bh + 8
-        text = "Schermo bloccato"
+        text = "Display locked"
         tw = draw.textbbox((0, 0), text, font=font)[2]
         draw.text(((width - tw) // 2, y), text, font=font, fill=0)
 
@@ -222,7 +222,12 @@ class BackupStatusView:
         error = kw.get("error", "")
         up_to_date = kw.get("up_to_date", False)
         # Ricorda la fase operativa per riusare l'etichetta in PAUSED/RETRYING.
-        if state in (State.CACHING, State.UPLOADING, State.REMOTE_CLEANUP, State.PRUNING):
+        if state in (
+            State.CACHING,
+            State.UPLOADING,
+            State.REMOTE_CLEANUP,
+            State.PRUNING,
+        ):
             self._active_phase = state
         elif state == State.IDLE:
             self._active_phase = None
@@ -361,7 +366,9 @@ class BackupStatusView:
             bar_w = width - 2 * x
             denom = self.progress_total if self.progress_total else 1
             fill = max(0, min(bar_w, int(bar_w * self.progress_current / denom)))
-            draw.rectangle([(x, bar_y), (x + bar_w, bar_y + bar_h)], fill=255, outline=0)
+            draw.rectangle(
+                [(x, bar_y), (x + bar_w, bar_y + bar_h)], fill=255, outline=0
+            )
             if fill > 1:
                 draw.rectangle(
                     [(x + 1, bar_y + 1), (x + fill - 1, bar_y + bar_h - 1)], fill=0
@@ -399,7 +406,14 @@ class BackupStatusView:
             if per_phase and y + line_h <= height - bottom_margin - 2:
                 draw.text((x, y), per_phase, font=font, fill=0)
                 y += line_h
-            if self.status in ("Caching files...", "Uploading...", "Cleaning remote...", "Pruning cache...", "Retrying...", "Paused"):
+            if self.status in (
+                "Caching files...",
+                "Uploading...",
+                "Cleaning remote...",
+                "Pruning cache...",
+                "Retrying...",
+                "Paused",
+            ):
                 return
 
         if self.status in ("Done", "Error") and self._stats is not None:
@@ -433,8 +447,16 @@ class BackupStatusView:
                     return
                 draw.text((x, y), f"Upload: {uo} ok {uf} err", font=font, fill=0)
                 y += line_h
-                if s.get("remote_deleted", 0) and y + line_h <= height - bottom_margin - 2:
-                    draw.text((x, y), f"Removed: {s.get('remote_deleted',0)}", font=font, fill=0)
+                if (
+                    s.get("remote_deleted", 0)
+                    and y + line_h <= height - bottom_margin - 2
+                ):
+                    draw.text(
+                        (x, y),
+                        f"Removed: {s.get('remote_deleted', 0)}",
+                        font=font,
+                        fill=0,
+                    )
                     y += line_h
                 if y + line_h <= height - bottom_margin - 2 and self._error_msg:
                     draw.text((x, y), self._error_msg[:30], font=font, fill=0)

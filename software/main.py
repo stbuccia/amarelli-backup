@@ -18,6 +18,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 if args.mock:
+
     class EPD:
         width = 122
         height = 250
@@ -123,15 +124,19 @@ def run_interactive(epd):
     except Exception as e:
         logger.warning("Uploader init skipped: %s", e)
 
-    wf = Backup(cache_obj, uploader, db, bus, mode=getattr(config, 'mode', 'upload'))
-    sd_card = SdCard(config.sd_src, mock=args.mock, mount_enabled=getattr(config, "sd_mount", True))
+    wf = Backup(cache_obj, uploader, db, bus, mode=getattr(config, "mode", "upload"))
+    sd_card = SdCard(
+        config.sd_src, mock=args.mock, mount_enabled=getattr(config, "sd_mount", True)
+    )
 
     def on_uploader_config_changed(key, value, **kw):
         if key not in ("uploader", "rclone_remote"):
             return
         try:
             wf.set_uploader(create_uploader(config, db, bus))
-            logger.info("Upload backend set to %s", getattr(config, "uploader", "webdav"))
+            logger.info(
+                "Upload backend set to %s", getattr(config, "uploader", "webdav")
+            )
         except Exception as error:
             logger.warning("Cannot switch upload backend: %s", error)
 
@@ -162,7 +167,9 @@ def run_interactive(epd):
             try:
                 cache_obj = Cache(config, db, bus, io_lock=spi_lock)
                 wf.set_cache(cache_obj)
-                logger.info("Cache ready: src=%s dst=%s", config.sd_src, config.cache_path)
+                logger.info(
+                    "Cache ready: src=%s dst=%s", config.sd_src, config.cache_path
+                )
             except Exception as error:
                 logger.warning("SD card is mounted but cannot be read: %s", error)
                 cache_available = False
@@ -181,18 +188,29 @@ def run_interactive(epd):
                 logger.info("SD card not available%s", hint)
             bus.emit("sd:changed", available=ui_available)
             # auto: SD rimossa da COMPLETED/ERROR -> IDLE, pronto al reinserimento.
-            if getattr(config, "operation_mode", "manual") == "auto" and wf.state in (State.COMPLETED, State.ERROR) and not ui_available:
+            if (
+                getattr(config, "operation_mode", "manual") == "auto"
+                and wf.state in (State.COMPLETED, State.ERROR)
+                and not ui_available
+            ):
                 logger.info("Auto: SD removed in %s, returning to IDLE", wf.state.name)
                 wf.stop()
 
         # auto headless: avvia appena c'e' SD pronta o pending da uploadare.
-        if getattr(config, "operation_mode", "manual") == "auto" and wf.state == State.IDLE:
+        if (
+            getattr(config, "operation_mode", "manual") == "auto"
+            and wf.state == State.IDLE
+        ):
             try:
                 pending = db.count_pending_uploads()
             except Exception:
                 pending = 0
             if ui_available or pending > 0:
-                logger.info("Auto-start backup (mode=auto available=%s pending=%s)", ui_available, pending)
+                logger.info(
+                    "Auto-start backup (mode=auto available=%s pending=%s)",
+                    ui_available,
+                    pending,
+                )
                 wf.start()
 
     def ensure_cache_on_demand() -> bool:
@@ -205,7 +223,11 @@ def run_interactive(epd):
             try:
                 cache_obj = Cache(config, db, bus, io_lock=spi_lock)
                 wf.set_cache(cache_obj)
-                logger.info("Cache ready (on-demand): src=%s dst=%s", config.sd_src, config.cache_path)
+                logger.info(
+                    "Cache ready (on-demand): src=%s dst=%s",
+                    config.sd_src,
+                    config.cache_path,
+                )
                 bus.emit("sd:changed", available=True)
             except Exception as e:
                 logger.warning("On-demand SD mount ok but Cache init failed: %s", e)
@@ -249,7 +271,9 @@ def run_interactive(epd):
         sd_available = None
         logger.info(
             "SD source changed: fake=%s src=%s mount=%s",
-            getattr(config, "fake_sd", False), config.sd_src, getattr(config, "sd_mount", True),
+            getattr(config, "fake_sd", False),
+            config.sd_src,
+            getattr(config, "sd_mount", True),
         )
         sync_sd_card()
 
@@ -261,7 +285,9 @@ def run_interactive(epd):
         TerminalKeyListener()
         if args.mock
         # pins = (UP, DOWN, LEFT/BACK, RIGHT/CONFIRM)
-        else GpioKeyListener(pins=(5, 6, 19, 13), display_busy=lambda: display.refreshing)
+        else GpioKeyListener(
+            pins=(5, 6, 19, 13), display_busy=lambda: display.refreshing
+        )
     )
     reed = ReedSwitch(pin=16, enabled=not args.mock)
     if reed.is_closed:
@@ -314,7 +340,18 @@ def _handle_mock_keys(ch, sb, display, current_view, legend):
 
 
 def _loop(
-    display, menu, menu_view, status_view, sb, legend, keys, backup, bus, config=None, db=None, mock=False,
+    display,
+    menu,
+    menu_view,
+    status_view,
+    sb,
+    legend,
+    keys,
+    backup,
+    bus,
+    config=None,
+    db=None,
+    mock=False,
     sync_sd_card=None,
     ensure_cache_on_demand=None,
     reed=None,
@@ -346,12 +383,24 @@ def _loop(
         if active_view[0] is status_view:
             bv = status_view
             state_name = getattr(getattr(backup, "state", None), "name", "?")
-            sd_s = "?" if bv._sd_available is None else ("ON" if bv._sd_available else "OFF")
-            bar = f" bar:{bv.progress_current}/{bv.progress_total}" if bv.progress_total else ""
-            cur = f" file:{bv.current_file}" if bv.current_file and bv.status == "Caching files..." else ""
+            sd_s = (
+                "?"
+                if bv._sd_available is None
+                else ("ON" if bv._sd_available else "OFF")
+            )
+            bar = (
+                f" bar:{bv.progress_current}/{bv.progress_total}"
+                if bv.progress_total
+                else ""
+            )
+            cur = (
+                f" file:{bv.current_file}"
+                if bv.current_file and bv.status == "Caching files..."
+                else ""
+            )
             stats = getattr(bv, "_stats", None)
             if stats:
-                stats_s = f" | stats cached:{stats.get('cached_ok',0)}/{stats.get('cached_failed',0)} up:{stats.get('uploaded_ok',0)}/{stats.get('uploaded_failed',0)} rm:{stats.get('remote_deleted',0)} pr:{stats.get('pruned',0)}"
+                stats_s = f" | stats cached:{stats.get('cached_ok', 0)}/{stats.get('cached_failed', 0)} up:{stats.get('uploaded_ok', 0)}/{stats.get('uploaded_failed', 0)} rm:{stats.get('remote_deleted', 0)} pr:{stats.get('pruned', 0)}"
                 if stats.get("up_to_date"):
                     stats_s += " up_to_date"
             else:
@@ -365,10 +414,11 @@ def _loop(
             idx = menu._selected
             total = len(menu._items)
             items_preview = " | ".join(
-                f"{'>' if i == idx else ' '}{it.label}" for i, it in enumerate(menu._items)
+                f"{'>' if i == idx else ' '}{it.label}"
+                for i, it in enumerate(menu._items)
             )
             print(
-                f"[DISPLAY] MENU | {title} | sel:{sel} ({idx+1}/{total}) | wifi:{wifi_s} | legend:{leg} | {items_preview}"
+                f"[DISPLAY] MENU | {title} | sel:{sel} ({idx + 1}/{total}) | wifi:{wifi_s} | legend:{leg} | {items_preview}"
             )
         else:
             print(f"[DISPLAY] {title} | legend:{leg}")
@@ -383,7 +433,13 @@ def _loop(
         display.render_full = _wrapped_render_full
 
     def on_key_press(key, **kw):
-        logger.info("Key pressed: %s state=%s active=%s view=%s", key, backup.state.name, backup.is_active, "status" if active_view[0] is status_view else "menu")
+        logger.info(
+            "Key pressed: %s state=%s active=%s view=%s",
+            key,
+            backup.state.name,
+            backup.is_active,
+            "status" if active_view[0] is status_view else "menu",
+        )
         if active_view[0] is status_view:
             # Durante un'operazione, ogni tasto laterale mette in pausa (tollera
             # cablaggi diversi dei pin).
@@ -470,7 +526,9 @@ def _loop(
         nonlocal wifi_task_running
         with wifi_task_lock:
             if wifi_task_running:
-                logger.info("[MENU] %s ignored: '%s' still running", name, wifi_task_running)
+                logger.info(
+                    "[MENU] %s ignored: '%s' still running", name, wifi_task_running
+                )
                 legend.set_text("WiFi busy...")
                 bus.emit("ui:redraw")
                 return
@@ -510,14 +568,16 @@ def _loop(
             # SystemExit e' incluso di proposito: make_server() di werkzeug
             # stampa "Port 5000 is in use" e chiama sys.exit(1), che non
             # essendo una Exception faceva terminare tutta l'applicazione.
-            logger.error("Error starting Flask on %s:%s: %s", host, port,
-                         "port already in use" if isinstance(e, SystemExit) else e)
+            logger.error(
+                "Error starting Flask on %s:%s: %s",
+                host,
+                port,
+                "port already in use" if isinstance(e, SystemExit) else e,
+            )
             flask_server = None
             flask_thread = None
             return False
-        flask_thread = threading.Thread(
-            target=flask_server.serve_forever, daemon=True
-        )
+        flask_thread = threading.Thread(target=flask_server.serve_forever, daemon=True)
         flask_thread.start()
         logger.info("Flask avviato su %s:%s", host, port)
         return True
@@ -585,7 +645,8 @@ def _loop(
             if not wifi_manager.captive_portal_ready:
                 logger.warning(
                     "Captive portal redirect not active: open http://%s:%s by hand",
-                    WiFiManager.AP_IP, port,
+                    WiFiManager.AP_IP,
+                    port,
                 )
         else:
             legend.set_text("AP ok - WEB ERROR!")
@@ -641,16 +702,18 @@ def _loop(
         if reed is not None:
             reed_closed = reed.get_state_change()
             if reed_closed is True:
-                logger.info("Coperchio chiuso")
-                display.render_full(LockView(), sb, Legend("Coperchio chiuso"))
+                logger.info("Closed")
+                display.render_full(LockView(), sb, Legend("Closed"))
                 display.suspend()
             elif reed_closed is False:
-                logger.info("Coperchio aperto")
+                logger.info("Open")
                 display.resume()
                 display.render_full(active_view[0], sb, legend)
 
         now = time.monotonic()
-        poll_interval = 0.25 if getattr(config, "operation_mode", "manual") == "auto" else 1.0
+        poll_interval = (
+            0.25 if getattr(config, "operation_mode", "manual") == "auto" else 1.0
+        )
         if sync_sd_card is not None and now - last_sd_check >= poll_interval:
             sync_sd_card()
             last_sd_check = now

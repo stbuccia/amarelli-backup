@@ -13,17 +13,12 @@ User=root
 # config.json usa path con "~" per db, cache e log, e in /root si perderebbe lo
 # storico e il database anti-duplicati.
 Environment=HOME=/home/raspberry
-# WorkingDirectory, PYTHONPATH ed ExecStart li riscrive install.sh con la
-# cartella reale del progetto. `systemctl cat liquorice` mostra il file
-# installato.
 WorkingDirectory=/home/raspberry/liquorice-backup
 Environment=PYTHONPATH=/home/raspberry/liquorice-backup/software
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/raspberry/liquorice-backup/.venv/bin/python /home/raspberry/liquorice-backup/software/main.py
 Restart=on-failure
 RestartSec=5
-# SIGINT invece di SIGTERM: lo stop passa dal KeyboardInterrupt di main.py, che
-# spegne LED e display prima di uscire.
 KillSignal=SIGINT
 TimeoutStopSec=30
 

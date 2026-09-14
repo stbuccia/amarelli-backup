@@ -35,7 +35,9 @@ sudo .venv/bin/python software/main.py
 
 ### If you move or rename things
 
-The service file is installed from `systemd/liquorice.service`: the installer rewrites the user, the working directory, the Python path and the command with the ones it finds when you run it. So any username and any project path work. If you move the project, or want to run it as another user, just run the installer again from the new location, as that user:
+The service file is installed from `systemd/liquorice.service`: the installer rewrites the working directory, the Python path, the command and `HOME` with the ones it finds when you run it, so any username and any project path work. What it does *not* rewrite is `User=root`: the app needs root for the LED strip (PWM and DMA go through `/dev/mem`), for the hotspot profile via `nmcli` and for mounting the card. `HOME` still points at your home, so the `~` paths in `config.json` (database, cache, log) keep resolving where your data is instead of `/root`.
+
+If you move the project, run the installer again from the new location:
 
 ```bash
 ./install.sh
@@ -71,17 +73,19 @@ systemctl cat liquorice
 ### The LED strip does nothing
 
 - The LED needs GPIO access. The installer adds your user to the `gpio` group, but that only takes effect after a reboot or a fresh login.
-- Under the `liquorice` service the strip also needs to write to `/dev/mem` (the WS2812B driver drives PWM through DMA). The unit file grants it with
+- Under the `liquorice` service the strip also needs to write to `/dev/mem` (the WS2812B driver drives PWM through DMA). That is why the unit runs with
 
   ```
-  AmbientCapabilities=CAP_SYS_RAWIO CAP_DAC_OVERRIDE
+  User=root
   ```
 
-  Both are required: with only one of them the library crashes with a segmentation fault. If the line is missing you get this in the log, and the box works but stays dark:
+  and why the installer does not rewrite that line. If the service ends up running as a normal user you get this in the log, and the box works but stays dark:
 
   ```
   LED disabilitato: permessi /dev/mem insufficienti (ws2811_init failed with code -5 (mmap() failed))
   ```
+
+  Check with `systemctl cat liquorice | grep ^User`. A non-root service can also drive the strip with `AmbientCapabilities=CAP_SYS_RAWIO CAP_DAC_OVERRIDE` instead, but both capabilities are needed: with only one of them the library crashes with a segmentation fault.
 
   After editing the unit, run `sudo systemctl daemon-reload && sudo systemctl restart liquorice`.
 - Test it directly (may need `sudo`):

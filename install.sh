@@ -248,11 +248,9 @@ sed -e "s|^Environment=HOME=.*|Environment=HOME=$HOME|" \
 sudo install -m 0644 "$unit_file" "$SYSTEMD_DIR/liquorice.service"
 rm -f "$unit_file"
 printf 'Service configured as root, HOME=%s, project in %s\n' "$HOME" "$PROJECT_DIR"
-# Regola sudoers per il mount della card: sotto il servizio (root) il sudo di
-# sdcard.py passerebbe comunque, ma serve quando l'app viene lanciata a mano
-# come utente normale. E' limitata a mkdir/mount/umount, al solo
-# /mnt/liquorice-sd e al mount in sola lettura.
-# Il glob parte da mmcblk1 come _find_device(): mmcblk0 e' la SD di sistema.
+# Regola sudoers per il mount della card, limitata a mkdir/mount/umount, al solo
+# /mnt/liquorice-sd e al mount in sola lettura. Il glob parte da mmcblk1 come
+# _find_device(): mmcblk0 e' la SD di sistema.
 sudoers_file=$(mktemp)
 cat >"$sudoers_file" <<EOF
 $USER ALL=(root) NOPASSWD: /usr/bin/mkdir -p /mnt/liquorice-sd, /usr/bin/mount -o ro /dev/mmcblk[1-9]* /mnt/liquorice-sd, /usr/bin/umount /mnt/liquorice-sd

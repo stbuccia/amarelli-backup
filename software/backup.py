@@ -48,6 +48,9 @@ class Backup:
         self._state = State.IDLE
         self._resume_state = State.IDLE
         self._cancel = threading.Event()
+        # I totali vivono sull'istanza: _run() gira in un thread nuovo a ogni
+        # resume, se fossero locali il riepilogo perderebbe i file gia' fatti.
+        self._stats = self._new_stats()
         self._bus.on("config:set", self._on_config_set)
         if self._cache is not None:
             self._cache._cancel = self._cancel
@@ -89,6 +92,7 @@ class Backup:
         if self._cache:
             self._cache.prepare_backup()
         self._cancel.clear()
+        self._stats = self._new_stats()
         self._set_state(State.CACHING, reset=True)
         threading.Thread(target=self._run, daemon=True).start()
         return True
@@ -168,21 +172,32 @@ class Backup:
         return 0
 
     @staticmethod
-    def _collect_stats(state, obj, stats):
+    def _new_stats() -> dict:
+        return {
+            "cached_ok": 0,
+            "cached_failed": 0,
+            "uploaded_ok": 0,
+            "uploaded_failed": 0,
+            "remote_deleted": 0,
+            "pruned": 0,
+        }
+
+    def _collect_stats(self, state, obj):
+        stats = self._stats
         if state == State.CACHING:
             s = getattr(obj, "last_copy_stats", {})
-            stats["cached_ok"] = s.get("ok", 0)
+            stats["cached_ok"] += s.get("ok", 0)
             stats["cached_failed"] = s.get("failed", 0)
         elif state == State.UPLOADING:
             s = getattr(obj, "last_upload_stats", {})
-            stats["uploaded_ok"] = s.get("ok", 0)
+            stats["uploaded_ok"] += s.get("ok", 0)
             stats["uploaded_failed"] = s.get("failed", 0)
         elif state == State.REMOTE_CLEANUP:
-            stats["remote_deleted"] = getattr(obj, "last_cleanup_stats", {}).get(
+            stats["remote_deleted"] += getattr(obj, "last_cleanup_stats", {}).get(
                 "ok", 0
             )
         elif state == State.PRUNING:
-            stats["pruned"] = getattr(obj, "last_prune_stats", {}).get("ok", 0)
+            stats["pruned"] += getattr(obj, "last_prune_stats", {}).get("ok", 0)
 
     def _skip_phase(self, state) -> bool:
         if self._mode == "upload" and state == State.REMOTE_CLEANUP:
@@ -191,17 +206,16 @@ class Backup:
             return True
         return False
 
-    def _run_phase(self, state, obj, method_name, stats) -> bool:
-        """Esegue una fase con retry+backoff. Ritorna True se l'utente ha messo in pausa."""
+    def _run_phase(self, state, obj, method_name) -> bool:
         for attempt in range(1, self._max_retries + 1):
             try:
                 logger.info("Starting phase %s (%s)", state.name, method_name)
                 getattr(obj, method_name)()
                 logger.info("Completed phase %s", state.name)
-                self._collect_stats(state, obj, stats)
+                self._collect_stats(state, obj)
                 return False
             except TransientError as e:
-                self._collect_stats(state, obj, stats)
+                self._collect_stats(state, obj)
                 if attempt >= self._max_retries:
                     raise
                 wait = self._retry_delay * (2 ** (attempt - 1))
@@ -218,19 +232,12 @@ class Backup:
                     return True
                 self._set_state(state)
             except PermanentError:
-                self._collect_stats(state, obj, stats)
+                self._collect_stats(state, obj)
                 raise
         return False
 
     def _run(self):
-        stats = {
-            "cached_ok": 0,
-            "cached_failed": 0,
-            "uploaded_ok": 0,
-            "uploaded_failed": 0,
-            "remote_deleted": 0,
-            "pruned": 0,
-        }
+        stats = self._stats
         try:
             target = self._resume_state if self._state == State.PAUSED else self._state
             phase_idx = next(
@@ -249,7 +256,7 @@ class Backup:
                     self._set_state(State.PAUSED)
                     return
 
-                if self._run_phase(state, obj, method_name, stats):
+                if self._run_phase(state, obj, method_name):
                     return
 
                 if self._cancel.is_set():
@@ -275,14 +282,14 @@ class Backup:
                     "pruned",
                 )
             )
-            self._set_state(State.COMPLETED, stats=stats, up_to_date=up_to_date)
+            self._set_state(State.COMPLETED, stats=dict(stats), up_to_date=up_to_date)
 
         except (TransientError, PermanentError) as e:
             logger.error("Backup error: %s", e)
-            self._set_state(State.ERROR, stats=stats, error=str(e)[:60])
+            self._set_state(State.ERROR, stats=dict(stats), error=str(e)[:60])
         except Exception as e:
             logger.exception("Unexpected backup error")
-            self._set_state(State.ERROR, stats=stats, error=str(e)[:60])
+            self._set_state(State.ERROR, stats=dict(stats), error=str(e)[:60])
 
     def _reconcile_mirror(self):
         self._db.mark_deleted_files(

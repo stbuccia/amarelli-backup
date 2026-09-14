@@ -26,9 +26,6 @@ if args.mock:
         def init(self):
             pass
 
-        def init_fast(self):
-            pass
-
         def Clear(self, color):
             pass
 
@@ -36,9 +33,6 @@ if args.mock:
             return image
 
         def display(self, image):
-            pass
-
-        def display_fast(self, image):
             pass
 
         def sleep(self):
@@ -319,7 +313,7 @@ def run_interactive(epd):
         sd_card.close()
         reed.cleanup()
         keys.cleanup()
-        display.init_full()
+        display.init()
         display.sleep()
 
 

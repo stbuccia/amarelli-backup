@@ -57,7 +57,7 @@ def main():
         print(f'"{TEXT}" visualizzato per 5 secondi.')
         time.sleep(5)
     finally:
-        display.init_full()
+        display.init()
         display.sleep()
 
 

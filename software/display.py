@@ -119,8 +119,6 @@ class Legend:
 
 
 class LockView:
-    LINE_SPACING = 4
-
     def render(self, draw, font, width, height, y_offset=0, bottom_margin=0):
         draw.rectangle([(0, y_offset), (width, height)], fill=255)
         cx = width // 2
@@ -518,19 +516,13 @@ class Display:
     def __init__(self, epd, font, io_lock=None, health_check=True):
         self._epd = epd
         self._font = font
-        self._initialized = False
         self._io_lock = io_lock
         self._suspended = False
-        self._last_frame = None
         self._health_check = health_check
         self._panel_ok = True
         self._silent_renders = 0
         self._refreshing = False
         self._refresh_ended = 0.0
-
-    @property
-    def font(self):
-        return self._font
 
     @property
     def refreshing(self):
@@ -544,34 +536,19 @@ class Display:
             return True
         return (time.monotonic() - self._refresh_ended) < self.REFRESH_GUARD_SECONDS
 
-    @property
-    def panel_ok(self):
-        return self._panel_ok
-
     def _lock(self):
         return self._io_lock or nullcontext()
 
     def init(self):
+        """init + Clear: sequenza di accensione (e di spegnimento) del pannello."""
         with self._lock():
-            self._init_panel()
-
-    def init_full(self):
-        with self._lock():
-            self._init_panel()
-
-    def _init_panel(self):
-        """init + Clear: sequenza di accensione del pannello."""
-        self._epd.init()
-        self._epd.Clear(0xFF)
+            self._epd.init()
+            self._epd.Clear(0xFF)
 
     def sleep(self):
         with self._lock():
             if not self._suspended:
                 self._epd.sleep()
-
-    @property
-    def suspended(self):
-        return self._suspended
 
     def suspend(self):
         with self._lock():
@@ -587,7 +564,6 @@ class Display:
                 return
             self._suspended = False
             self._epd.init()
-            self._initialized = True
         logger.info("Display riattivato: coperchio aperto")
 
     def _compose(self, content_view, status_bar, legend):
@@ -657,13 +633,11 @@ class Display:
 
     def render_full(self, content_view, status_bar, legend):
         img = self._compose(content_view, status_bar, legend)
-        self._last_frame = img
         with self._lock():
             if self._suspended:
                 return
             buffer = self._epd.getbuffer(img)
             elapsed = self._push(buffer)
-            self._initialized = True
             if not self._health_check:
                 return
             if elapsed >= self.MIN_REFRESH_SECONDS:

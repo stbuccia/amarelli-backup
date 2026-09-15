@@ -27,14 +27,12 @@ author: "Stefano Bucciarelli, Laboratorio di Making, A.A. 2025/26"
 
 # Funzionalità e impostazioni
 
-- Destinazione: qualsiasi remoto `rclone` (Dropbox, Drive, S3, Backblaze, SFTP),
-  WebDAV nativo o un percorso locale
+- Destinazione: qualsiasi remoto `rclone` (Dropbox, Drive, S3, ...) o WebDAV nativo
 - **Mirroring**: le cancellazioni sulla SD si propagano al remoto
-    - remoto svuotato → nuova destinazione, nessun ri-upload dei vecchi file
 - **Pruning** della cache: subito, dopo 7 giorni, dopo 30 giorni, conserva
 - Filtro file: tutti, foto (JPG+RAW), solo JPG
 - Modalità: manuale passo a passo o automatica a latta chiusa (LED)
-- Ogni impostazione da menù a bordo o dalla pagina web, salvata su `config.json`
+- Ogni impostazione da menù o dalla pagina web, salvata su `config.json`
 
 # 2. Hardware
 
@@ -54,7 +52,7 @@ author: "Stefano Bucciarelli, Laboratorio di Making, A.A. 2025/26"
 
 # Part list: note
 
-- Totale: **110,71 €** + spedizione, con sd, latta, viti, fili e biadesivo
+- Totale: **110,71 €** (con sd, latta, viti, fili e biadesivo) + spedizione
 - Microcomputer per esclusione: Pi 3/4/5 grandi, Pico senza OS, CM senza header
 - Lettore SD su SPI e non sulla porta USB
 - E-paper e non LCD: bistabile, leggibile al sole, refresh lento accettabile
@@ -149,11 +147,10 @@ author: "Stefano Bucciarelli, Laboratorio di Making, A.A. 2025/26"
 
 # Caso pratico: upload
 
-- Pendenti dal DB, struttura di cartelle preservata
+- Pendenti dal DB
 - Stato dedotto dai timestamp (`cached_at`, `uploaded_at`)
 - Idempotenza: interruzione a metà → riprende senza ripristino
 - `file:uploaded` a conferma di un trasferimento
-    - display: barra, nome del file, contatori; nessun accoppiamento con il core
 - Pruning locale (upload) o pulizia del remoto (mirror): `file:pruned`, `file:remote_deleted`
 - `backup:state` con `COMPLETED`: statistiche, "Done", LED verde
 
